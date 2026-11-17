@@ -4,6 +4,10 @@
   "description": "HAZMA - one unified language for building websites and web applications. Compiler, runtime and toolchain.",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/coolgamer203695-cyber/hazma"
+  },
   "bin": {
     "hazma": "bin/hazma.js"
   },
