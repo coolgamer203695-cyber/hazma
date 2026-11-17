@@ -1,0 +1,34 @@
+// 03_loops.hz - repeats run the body first, then check the till condition
+
+save : number = 0
+
+repeat till number > 3 {
+    log.out {
+        "tick " + number
+    }
+
+    change : number = number + 1
+}
+
+// a named repeat can be paused and resumed from where it stopped
+save : battery = 3
+
+repeat : power {
+    till battery < 1
+    log.out {
+        "power level " + battery
+    }
+
+    change : battery = battery - 1
+    repeat.break : power
+}
+
+log.out {
+    "paused with battery " + battery
+}
+
+repeat.continue : power
+
+log.out {
+    "resumed with battery " + battery
+}

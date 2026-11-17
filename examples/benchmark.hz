@@ -1,0 +1,14 @@
+// examples/benchmark.hz - HAZMA compute benchmark
+// Counts to 1,000,000,000 with no per-iteration output.
+// Time it externally:
+//   pwsh: Measure-Command { node bin/hazma.js run examples/benchmark.hz }
+//   cmd : time node bin/hazma.js run examples/benchmark.hz
+
+save : target = 1000000000
+save : n = 0
+
+repeat till n == target {
+    change : n = n + 1
+}
+
+log.out { "reached " + n }

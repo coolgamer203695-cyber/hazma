@@ -1,0 +1,137 @@
+{
+  "save": {
+    "prefix": "save",
+    "body": ["save : ${1:name} = ${2:value}"],
+    "description": "Create a variable: save : name = value"
+  },
+  "change": {
+    "prefix": "change",
+    "body": ["change : ${1:name} = ${2:value}"],
+    "description": "Update a variable, keeping its type"
+  },
+  "tchange": {
+    "prefix": "t.change",
+    "body": ["t.change : ${1:name} = ${2:value}"],
+    "description": "Update a variable and change its type"
+  },
+  "log": {
+    "prefix": "log",
+    "body": ["log.out {", "\t${1:value}", "}"],
+    "description": "Print a value"
+  },
+  "if": {
+    "prefix": "if",
+    "body": [
+      "if : ${1:condition} {",
+      "\t${2:${3:log.out} {",
+      "\t\t\"...\"",
+      "\t}}",
+      "}"
+    ],
+    "description": "if : condition { ... } with a log.out body"
+  },
+  "ifelse": {
+    "prefix": "ifelse",
+    "body": [
+      "if : ${1:condition} {",
+      "\t${2}",
+      "} else : {",
+      "\t${3}",
+      "}"
+    ],
+    "description": "if / else block"
+  },
+  "elseif": {
+    "prefix": "elseif",
+    "body": [
+      "if : ${1:condition} {",
+      "\t${2}",
+      "} else if : ${3:condition} {",
+      "\t${4}",
+      "} else : {",
+      "\t${5}",
+      "}"
+    ],
+    "description": "if / else if / else chain"
+  },
+  "schange": {
+    "prefix": "s.change",
+    "body": [
+      "s.change : ${1:subject} {",
+      "\t${2:label} = ${3:value} {",
+      "\t\t${4}",
+      "\t}",
+      "",
+      "\tdefault : {",
+      "\t\t${5}",
+      "\t}",
+      "}"
+    ],
+    "description": "Selection block with labeled branches and default"
+  },
+  "repeat": {
+    "prefix": "repeat",
+    "body": ["repeat till ${1:is.done} {", "\t${2}", "}"],
+    "description": "Repeat until a condition holds (body runs first)"
+  },
+  "repeatnamed": {
+    "prefix": "repeatnamed",
+    "body": ["repeat : ${1:name} {", "\ttill ${2:condition}", "\t${3}", "}"],
+    "description": "Named repeat with till as first statement"
+  },
+  "repeatbreak": {
+    "prefix": "repeat.break",
+    "body": ["repeat.break : ${1:name}"],
+    "description": "Pause a named repeat (frames stay frozen)"
+  },
+  "repeatcontinue": {
+    "prefix": "repeat.continue",
+    "body": ["repeat.continue : ${1:name}"],
+    "description": "Resume a paused named repeat where it stopped"
+  },
+  "repeatnew": {
+    "prefix": "repeat.new",
+    "body": ["repeat.new : ${1:name}"],
+    "description": "Restart a paused named repeat from its first pass"
+  },
+  "func": {
+    "prefix": "func",
+    "body": ["func : ${1:name} {", "\t${2}", "}"],
+    "description": "Declare a function"
+  },
+  "funcp": {
+    "prefix": "func.p",
+    "body": ["func.p : ${1:name}${2: = ${3:default}}"],
+    "description": "Declare a function parameter"
+  },
+  "funcc": {
+    "prefix": "func.c",
+    "body": ["func.c : ${1:name} {", "\t${2}", "}"],
+    "description": "Call a function"
+  },
+  "funcr": {
+    "prefix": "func.r",
+    "body": ["func.r : ${1:value}"],
+    "description": "Return a value from a function"
+  },
+  "struct": {
+    "prefix": "struct",
+    "body": ["struct : ${1:name} {", "\t${2:prop} = ${3:default}", "}"],
+    "description": "Declare a structure with literal defaults"
+  },
+  "structbase": {
+    "prefix": "struct.base",
+    "body": ["struct : ${1:name} {", "\tstruct.base : ${2:parent}", "\t${3}", "}"],
+    "description": "Declare a structure that inherits from a parent"
+  },
+  "createstruct": {
+    "prefix": "struct.c",
+    "body": ["struct.c : ${1:name} {", "\t${2:prop} = ${3:value}", "}"],
+    "description": "Create a structure instance with overrides"
+  },
+  "constprop": {
+    "prefix": "const.",
+    "body": ["const. ${1:name} = ${2:value}"],
+    "description": "Locked structure property"
+  }
+}

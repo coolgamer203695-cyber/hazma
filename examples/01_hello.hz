@@ -1,0 +1,17 @@
+// 01_hello.hz - the classic first program, HAZMA style
+
+log.out {
+    "Hello HAZMA!"
+}
+
+save : age = 18
+save : username = "Alex"
+save : is.ready = true
+
+log.out {
+    username + " is " + age
+}
+
+log.out {
+    "ready: " + is.ready
+}

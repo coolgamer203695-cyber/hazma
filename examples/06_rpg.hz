@@ -1,0 +1,67 @@
+// 06_rpg.hz - a small fight that brings every core feature together
+
+struct : hero_structure {
+    const.id = 0
+    name = "Hero"
+    health = 100
+    potions = 2
+}
+
+struct : goblin_structure {
+    const.id = 100
+    health = 30
+    damage = 8
+}
+
+func : attack {
+    func.p : attacker
+    func.p : target
+    func.p : amount
+
+    change : target.health = target.health - amount
+    log.out {
+        attacker + " hits for " + amount + " (target at " + target.health + ")"
+    }
+}
+
+hero = struct.c : hero_structure {
+    name = "Alex"
+}
+
+goblin = struct.c : goblin_structure
+
+save : is.fight.over = false
+
+repeat till is.fight.over {
+    func.c : attack {
+        hero.name
+        goblin
+        12
+    }
+
+    if : goblin.health <= 0 {
+        log.out {
+            "The goblin falls!"
+        }
+
+        change : is.fight.over = true
+    }
+    else : {
+        func.c : attack {
+            "Goblin"
+            hero
+            goblin.damage
+        }
+    }
+}
+
+if : hero.health < 100 {
+    log.out {
+        hero.name + " survived with " + hero.health + " hp"
+    }
+}
+else : {
+    log.out {
+        hero.name + " survived untouched"
+    }
+}

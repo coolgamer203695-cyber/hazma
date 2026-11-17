@@ -1,0 +1,48 @@
+// 05_structs.hz - structures, const, creation values and inheritance
+
+struct : npc_structure {
+    const.id = 1
+    health = 100
+    strength = 0
+}
+
+struct : inventory_structure {
+    slots = 20
+    coins = 0
+}
+
+struct.base : npc_structure {
+    struct : boss_structure {
+        health = 500
+        strength = 20
+
+        inventory = struct.c : inventory_structure {
+            slots = 40
+        }
+    }
+}
+
+alex = struct.c : npc_structure
+bob = struct.c : npc_structure {
+    strength = 5
+}
+
+change : alex.health = 50
+change : alex {
+    strength = 10
+}
+
+log.out {
+    alex
+}
+
+log.out {
+    bob
+}
+
+boss = struct.c : boss_structure
+change : boss.inventory.coins = 900
+
+log.out {
+    boss.health + " hp and " + boss.inventory.coins + " coins"
+}

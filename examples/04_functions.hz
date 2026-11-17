@@ -1,0 +1,32 @@
+// 04_functions.hz - func, func.p, func.c, func.r
+
+func : welcome {
+    func.p : name = "Guest"
+
+    log.out {
+        "Welcome " + name
+    }
+}
+
+func : add {
+    func.p : num1
+    func.p : num2
+
+    func.r : num1 + num2
+}
+
+func.c : welcome {
+    "Alex"
+}
+
+func.c : welcome {
+}
+
+save : total = func.c : add {
+    2
+    3
+}
+
+log.out {
+    "2 + 3 = " + total
+}

@@ -1,0 +1,88 @@
+{
+  "name": "hazma",
+  "displayName": "HAZMA Language",
+  "description": "HAZMA - one language for building websites and web applications. Syntax highlighting, real compiler diagnostics, snippets and a run button for .hz files.",
+  "version": "0.1.0",
+  "publisher": "hazma-lang",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hazma-lang/hazma"
+  },
+  "license": "MIT",
+  "icon": "assets/icon.png",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "keywords": [
+    "hazma",
+    "language",
+    "web"
+  ],
+  "activationEvents": [
+    "onLanguage:hazma"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "hazma",
+        "aliases": [
+          "HAZMA",
+          "hazma"
+        ],
+        "extensions": [
+          ".hz"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./assets/icon.png",
+          "dark": "./assets/icon.png"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "hazma",
+        "scopeName": "source.hazma",
+        "path": "./syntaxes/hazma.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "hazma",
+        "path": "./snippets/hazma.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "hazma.run",
+        "title": "HAZMA: Run Program",
+        "icon": "$(play)"
+      },
+      {
+        "command": "hazma.check",
+        "title": "HAZMA: Check Program"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "hazma.run",
+          "when": "resourceLangId == hazma",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "hazma.run",
+        "key": "ctrl+f5",
+        "when": "resourceLangId == hazma"
+      }
+    ]
+  }
+}

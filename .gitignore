@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.vsix
+# bundled copy of the compiled compiler inside the extension (reproducible:
+# npm run bundle:extension)
+vscode-hazma/core/
+vscode-hazma/node_modules/

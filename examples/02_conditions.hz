@@ -1,0 +1,32 @@
+// 02_conditions.hz - if, else if, else and logic words
+
+save : age = 15
+save : is.member = true
+
+if : age >= 18 {
+    log.out {
+        "Adult"
+    }
+}
+else if : age > 12 {
+    log.out {
+        "Teenager"
+    }
+}
+else : {
+    log.out {
+        "Child"
+    }
+}
+
+if : age > 12 and is.member {
+    log.out {
+        "Teen member"
+    }
+}
+
+if : not age >= 18 {
+    log.out {
+        "Not an adult yet"
+    }
+}
