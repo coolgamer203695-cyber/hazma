@@ -21,7 +21,12 @@ export type Expr =
   | Binary
   | Not
   | StructCreate
-  | FuncCall;
+  | FuncCall
+  | ListLit
+  | ListIndex
+  | ListCount
+  | ListFind
+  | ListFindIndex;
 
 export interface NumberLit extends BaseNode {
   kind: "number";
@@ -101,6 +106,39 @@ export interface FuncCall extends BaseNode {
   span: Span;
 }
 
+/** `{ "Sword" "Gun" }` - a list literal. */
+export interface ListLit extends BaseNode {
+  kind: "list.lit";
+  items: Expr[];
+}
+
+/** `weapons[1]` - 1-based element access. */
+export interface ListIndex extends BaseNode {
+  kind: "index";
+  target: Expr;
+  index: Expr;
+}
+
+/** `l.count : weapons` */
+export interface ListCount extends BaseNode {
+  kind: "list.count";
+  list: Expr;
+}
+
+/** `l.find : weapons { "Sword" }` - true when the value is present. */
+export interface ListFind extends BaseNode {
+  kind: "list.find";
+  list: Expr;
+  value: Expr;
+}
+
+/** `l.find.index : weapons { "Sword" }` - 1-based position, 0 when absent. */
+export interface ListFindIndex extends BaseNode {
+  kind: "list.find.index";
+  list: Expr;
+  value: Expr;
+}
+
 // ---------------------------------------------------------------------------
 // Statements
 // ---------------------------------------------------------------------------
@@ -123,7 +161,11 @@ export type Stmt =
   | FuncReturn
   | StructDecl
   /** `func.p : name` - only valid as the first lines of a function body. */
-  | FuncParamStmt;
+  | FuncParamStmt
+  | ListSave
+  | ListAdd
+  | ListRemove
+  | ListChange;
 
 export interface FuncParamStmt extends BaseNode {
   kind: "func.p";
@@ -280,6 +322,41 @@ export interface StructDecl extends BaseNode {
   parents: string[];
 }
 
+/** `l.save : weapons = { ... }` - declares a new list (or re-initializes one). */
+export interface ListSave extends BaseNode {
+  kind: "l.save";
+  target: string[];
+  items: Expr[];
+}
+
+/** `l.add : weapons { ... }` - appends one or more elements. */
+export interface ListAdd extends BaseNode {
+  kind: "l.add";
+  target: string[];
+  items: Expr[];
+}
+
+/** `l.remove : weapons { ... }` - removes the first occurrence of each value. */
+export interface ListRemove extends BaseNode {
+  kind: "l.remove";
+  target: string[];
+  values: Expr[];
+}
+
+export interface ListChangeEntry {
+  /** 1-based position */
+  index: Expr;
+  value: Expr;
+  span: Span;
+}
+
+/** `l.change : weapons { 2 = "Rifle" }` - replaces by 1-based index. */
+export interface ListChange extends BaseNode {
+  kind: "l.change";
+  target: string[];
+  changes: ListChangeEntry[];
+}
+
 export interface Program {
   stmts: Stmt[];
 }
@@ -301,5 +378,10 @@ export function describeExpr(e: Expr): string {
     case "not": return "a negated condition";
     case "struct.c": return `a ${e.structName} instance`;
     case "func.c": return `the result of ${e.funcName}`;
+    case "list.lit": return "a list";
+    case "index": return "a list element";
+    case "list.count": return "the number of elements";
+    case "list.find": return "true or false from l.find";
+    case "list.find.index": return "an index from l.find.index";
   }
 }

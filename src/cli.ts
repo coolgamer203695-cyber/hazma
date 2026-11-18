@@ -14,7 +14,7 @@ import { Parser } from "./parser/parser.js";
 import { Analyzer } from "./semantic/analyzer.js";
 import { Interpreter } from "./runtime/interpreter.js";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 function fail(msg: string): never {
   console.error(msg);

@@ -93,7 +93,7 @@
       "patterns": [
         {
           "name": "keyword.control.hazma",
-          "match": "\\b(?:t\\.change|s\\.change|log\\.out|struct\\.c|struct\\.base|func\\.p|func\\.c|func\\.r|repeat\\.break|repeat\\.continue|repeat\\.new|save|change|repeat|func|struct|if|else|till|default)\\b"
+          "match": "\\b(?:t\\.change|s\\.change|log\\.out|struct\\.c|struct\\.base|func\\.p|func\\.c|func\\.r|repeat\\.break|repeat\\.continue|repeat\\.new|l\\.save|l\\.add|l\\.remove|l\\.change|l\\.count|l\\.find\\.index|l\\.find|save|change|repeat|func|struct|if|else|till|default)\\b"
         },
         {
           "name": "keyword.operator.logical.hazma",
@@ -146,6 +146,10 @@
         {
           "name": "punctuation.section.parens.hazma",
           "match": "[()]"
+        },
+        {
+          "name": "punctuation.section.brackets.hazma",
+          "match": "[\\[\\]]"
         }
       ]
     },

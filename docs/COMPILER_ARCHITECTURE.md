@@ -61,9 +61,13 @@ Recursive descent over the flat token list:
   `["is.fight.over"]`); `pathTarget` validates property paths (split
   parts, e.g. `["alex","health"]`).
 - Expression precedence chain: `parseExpression` → `or` → `and` → `not`
-  → comparisons → additive → multiplicative → unary → primary; `.r` is a
-  postfix at primary level and wraps the inner expression in a `round`
-  node.
+  → comparisons → additive → multiplicative → unary → primary; `.r` and
+  `[ index ]` are postfix operators at primary level (`round` and `index`
+  nodes).
+- List syntax: `l.save` / `l.add` / `l.remove` / `l.change` statements use
+  `parseListItems` (newline- or comma-separated expressions) and
+  `parseListChanges` (`index = value` lines); `{ ... }` in value position
+  is a `list.lit`.
 - Named repeats: the parser pulls the leading `till` line out of the body
   into `RepeatNamed.cond` and rejects `func.p` after non-parameter
   statements.
@@ -79,6 +83,10 @@ Discriminated unions. Notable nodes: `RepeatNamed` carries `usedVars`
 `targetDecl` (the resolved `RepeatNamed` node) and `scopeKind`
 (`"global" | "function"`), which the runtime needs for pause/resume and
 `repeat.new` snapshots.
+
+List nodes are first-class: expressions `ListLit`, `ListIndex`,
+`ListCount`, `ListFind`, `ListFindIndex`; statements `ListSave`,
+`ListAdd`, `ListRemove`, `ListChange` (with `ListChangeEntry`).
 
 ---
 
@@ -106,6 +114,12 @@ variable whose name is the joined parts), `checkAssign` (the H3012 /
 H3013 machinery), `collectUsedVars` (the repeat-body variable census),
 `checkIsNaming` (D3), and the recursion detector (H3057) over the
 function call graph.
+
+Lists add `{ k: "list"; of: Type }` to `Type` (with `typeEq`/`typeKey`
+recursing into the element type), list-literal inference through
+`listType`/`unifyTypes`, list checks in `exprType` (H3060/H3061/H3062)
+and `l.change` index typing (H3063). List literals are valid structure
+defaults, so `validateDefault`/`defaultType` accept them.
 
 Diagnostics accumulate in `result.diagnostics` (a compile may report
 **several** problems at once); parser/lexer errors throw and surface as
@@ -136,9 +150,15 @@ paused and resumed, plain recursion would not survive.
   referenced variables (`usedVars`) to the snapshot taken at loop entry.
 - `func.r` unwinds via a `ReturnSignal`; a stray one at top level is
   H4099.
-- Values are plain JS `number | string | boolean` plus
-  `StructInstance { def, values }` where `def` is shared per structure;
-  instances are deep-copied on assignment so instances stay independent.
+- Values are plain JS `number | string | boolean`, `StructInstance
+  { def, values }` where `def` is shared per structure, and
+  `ListValue { items }`. Structure instances and lists are **reference
+  values**: copying a variable shares the object, while `repeat.new`
+  snapshots are deep copies (`deepCopy`).
+- List operations live in `execStmt` (`l.save`/`l.add`/`l.remove`/
+  `l.change`) and `eval` (`list.lit`, `index`, `list.count`, `list.find`,
+  `list.find.index`). `listIndex` centralises 1-based validation
+  (H4061/H4062); `requireListPath`/`evalList` centralise H4064.
 - `log.out` output goes through an injectable `out` function
   (`RunOptions.out`), defaulting to stdout; the test harness and the
   VS Code extension capture it instead.
@@ -204,6 +224,12 @@ The architecture leaves room for:
   the frame machine's `Frame`/`ip` model maps directly to a
   `code[] + pc` VM with explicit loop-state objects, so the pause/resume
   semantics (D6) survive compilation.
+- **Native machine-code backend**: a genuinely compiled HAZMA would lower
+  the typed IR (including the `list` type) to a lower-level IR, emit
+  object code through LLVM (or Cranelift), and link a native executable
+  per platform. This has **not been started** — `hazma run` still
+  executes the AST with the interpreter. No native executable is produced
+  today, and no performance comparison against C/C++/Rust is claimed.
 - **Web layer**: the language's original goal — elements, styling and
   events as first-class HAZMA constructs replacing HTML/CSS/JS. This
   needs a new statement family and a host runtime (browser or Node

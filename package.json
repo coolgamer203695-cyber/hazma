@@ -1,6 +1,6 @@
 {
   "name": "hazma",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "HAZMA - one unified language for building websites and web applications. Compiler, runtime and toolchain.",
   "license": "MIT",
   "type": "module",

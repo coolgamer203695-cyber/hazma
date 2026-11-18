@@ -21,10 +21,19 @@ export class StructInstance {
   ) {}
 }
 
-export type RuntimeValue = number | string | boolean | StructInstance;
+/** A mutable, ordered list. Variables hold a reference to it. */
+export class ListValue {
+  constructor(public items: RuntimeValue[]) {}
+}
+
+export type RuntimeValue = number | string | boolean | StructInstance | ListValue;
 
 function isStruct(v: RuntimeValue): v is StructInstance {
   return v instanceof StructInstance;
+}
+
+function isList(v: RuntimeValue): v is ListValue {
+  return v instanceof ListValue;
 }
 
 export function sameValueType(a: RuntimeValue, b: RuntimeValue): boolean {
@@ -32,12 +41,14 @@ export function sameValueType(a: RuntimeValue, b: RuntimeValue): boolean {
   if (typeof a === "string" && typeof b === "string") return true;
   if (typeof a === "boolean" && typeof b === "boolean") return true;
   if (isStruct(a) && isStruct(b)) return a.def === b.def;
+  if (isList(a) && isList(b)) return true;
   return false;
 }
 
 export function valueEquals(a: RuntimeValue, b: RuntimeValue): boolean {
   if (!sameValueType(a, b)) return false;
   if (isStruct(a) && isStruct(b)) return a === b; // instances compare by identity
+  if (isList(a) && isList(b)) return a === b; // lists compare by identity
   return a === b;
 }
 
@@ -45,6 +56,7 @@ export function fmtType(v: RuntimeValue): string {
   if (typeof v === "number") return "a number";
   if (typeof v === "string") return "a string";
   if (typeof v === "boolean") return "true or false";
+  if (isList(v)) return "a list";
   return `a ${v.def.name} instance`;
 }
 
@@ -52,12 +64,14 @@ export function format(v: RuntimeValue): string {
   if (typeof v === "number") return String(v);
   if (typeof v === "string") return v;
   if (typeof v === "boolean") return v ? "true" : "false";
+  if (isList(v)) return "[" + v.items.map(format).join(", ") + "]";
   const parts = v.def.props.map((p, i) => `${p.name}: ${format(v.values[i])}`);
   return `${v.def.name}{ ${parts.join(", ")} }`;
 }
 
 function deepCopy(v: RuntimeValue): RuntimeValue {
   if (isStruct(v)) return new StructInstance(v.def, v.values.map(deepCopy));
+  if (isList(v)) return new ListValue(v.items.map(deepCopy));
   return v;
 }
 
@@ -222,6 +236,56 @@ export class Interpreter {
       case "t.change": {
         const value = this.eval(stmt.expr, fr.scope, stmt.span);
         this.assignTo(stmt.target, value, stmt.span, true);
+        break;
+      }
+
+      case "l.save": {
+        const name = stmt.target[0];
+        const value = new ListValue(stmt.items.map((item) => this.eval(item, fr.scope, item.span)));
+        this.checkIsNaming(name, value, stmt.span);
+        const holder = this.findVarHolder(name, fr.scope);
+        if (holder) {
+          // re-executed l.save re-initializes the list, like save does
+          this.checkAssignType(holder.vars.get(name)!, value, name, stmt.span, false);
+          holder.vars.set(name, value);
+        } else {
+          fr.scope.vars.set(name, value);
+        }
+        break;
+      }
+
+      case "l.add": {
+        const list = this.requireListPath(stmt.target, fr.scope, stmt.span, "l.add");
+        for (const item of stmt.items) {
+          list.items.push(this.eval(item, fr.scope, item.span));
+        }
+        break;
+      }
+
+      case "l.remove": {
+        const list = this.requireListPath(stmt.target, fr.scope, stmt.span, "l.remove");
+        for (const valueExpr of stmt.values) {
+          const value = this.eval(valueExpr, fr.scope, valueExpr.span);
+          const at = list.items.findIndex((item) => valueEquals(item, value));
+          if (at === -1) {
+            throw new HazmaError(
+              "H4063",
+              `${format(value)} is not in "${stmt.target.join(".")}", so it cannot be removed`,
+              valueExpr.span,
+              "l.remove removes the first matching element - check the value with l.find first",
+            );
+          }
+          list.items.splice(at, 1);
+        }
+        break;
+      }
+
+      case "l.change": {
+        const list = this.requireListPath(stmt.target, fr.scope, stmt.span, "l.change");
+        for (const c of stmt.changes) {
+          const at = this.listIndex(c.index, fr.scope, list);
+          list.items[at] = this.eval(c.value, fr.scope, c.value.span);
+        }
         break;
       }
 
@@ -601,6 +665,57 @@ export class Interpreter {
     }
   }
 
+  /** Resolve a path (variable or struct property) that must hold a list. */
+  private requireListPath(target: string[], scope: Scope, span: Span, op: string): ListValue {
+    const v = this.readPath(target, span, scope);
+    if (!isList(v)) {
+      throw new HazmaError(
+        "H4064",
+        `${op} needs a list, but "${target.join(".")}" is ${fmtType(v)}`,
+        span,
+        "create a list first with: l.save : name = { ... }",
+      );
+    }
+    return v;
+  }
+
+  /** Evaluate an expression that must produce a list. */
+  private evalList(expr: Expr, scope: Scope, op: string): ListValue {
+    const v = this.eval(expr, scope, expr.span);
+    if (!isList(v)) {
+      throw new HazmaError(
+        "H4064",
+        `${op} needs a list, but this is ${fmtType(v)}`,
+        expr.span,
+        "create a list first with: l.save : name = { ... }",
+      );
+    }
+    return v;
+  }
+
+  /** Turn a 1-based index expression into a 0-based offset, validating it. */
+  private listIndex(expr: Expr, scope: Scope, list: ListValue): number {
+    const raw = this.eval(expr, scope, expr.span);
+    const n = list.items.length;
+    if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1) {
+      throw new HazmaError(
+        "H4061",
+        `list indexes are whole numbers starting at 1, but the index is ${format(raw)}`,
+        expr.span,
+        n === 0 ? "the list is empty" : `the list has ${n} element${n === 1 ? "" : "s"}`,
+      );
+    }
+    if (raw > n) {
+      throw new HazmaError(
+        "H4062",
+        `index ${raw} is out of range - the list has ${n} element${n === 1 ? "" : "s"}`,
+        expr.span,
+        n === 0 ? "the list is empty, so there is nothing to access" : `use an index from 1 to ${n}`,
+      );
+    }
+    return raw - 1;
+  }
+
   private multiAssign(
     target: string[],
     props: PropAssign[],
@@ -737,6 +852,39 @@ export class Interpreter {
           );
         }
         return v;
+      }
+
+      case "list.lit":
+        return new ListValue(expr.items.map((item) => this.eval(item, scope, item.span)));
+
+      case "index": {
+        const target = this.eval(expr.target, scope, expr.span);
+        if (!isList(target)) {
+          throw new HazmaError(
+            "H4060",
+            `${fmtType(target)} cannot be indexed - only lists are indexed, like weapons[1]`,
+            expr.span,
+          );
+        }
+        return target.items[this.listIndex(expr.index, scope, target)];
+      }
+
+      case "list.count": {
+        const list = this.evalList(expr.list, scope, "l.count");
+        return list.items.length;
+      }
+
+      case "list.find": {
+        const list = this.evalList(expr.list, scope, "l.find");
+        const value = this.eval(expr.value, scope, expr.value.span);
+        return list.items.some((item) => valueEquals(item, value));
+      }
+
+      case "list.find.index": {
+        const list = this.evalList(expr.list, scope, "l.find.index");
+        const value = this.eval(expr.value, scope, expr.value.span);
+        const at = list.items.findIndex((item) => valueEquals(item, value));
+        return at === -1 ? 0 : at + 1;
       }
     }
   }
@@ -914,6 +1062,8 @@ export class Interpreter {
       }
       case "struct.c":
         return this.instantiate(expr.structName, expr.overrides, expr.span, scope);
+      case "list.lit":
+        return new ListValue(expr.items.map((item) => this.constEval(item, scope, span)));
       default:
         throw new HazmaError(
           "H4016",

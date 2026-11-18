@@ -59,4 +59,25 @@ describe("example programs", () => {
       "Alex survived with 84 hp",
     ]);
   });
+
+  it("07_lists.hz", () => {
+    const r = runSource(example("07_lists.hz"));
+    assert.equal(r.ok, true, JSON.stringify(r.diagnostics));
+    assert.deepEqual(r.output, [
+      "[Sword, Gun, Bow]",
+      "3",
+      "Sword",
+      "true",
+      "2",
+      "false",
+      "0",
+      "[Sword, Gun, Bow, Shield, Dagger]",
+      "[Sword, Rifle, Bow, Shield, Dagger]",
+      "[Sword, Rifle, Shield, Dagger]",
+      "[10, 30]",
+      "1",
+      "[Apple, Banana]",
+      "0",
+    ]);
+  });
 });

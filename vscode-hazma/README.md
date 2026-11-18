@@ -12,9 +12,10 @@ replace HTML, CSS and JavaScript.
 
 - **Syntax highlighting** — full TextMate grammar for the language:
   dotted commands (`save :`, `t.change :`, `log.out { ... }`,
-  `s.change`, `repeat`, `func.p/c/r`, `struct.c/base`, `const.`),
-  boolean names (`is.ready`, `is.fight.over`), the `.r` round operator,
-  strings with escapes, numbers and comments (`//`).
+  `s.change`, `repeat`, `func.p/c/r`, `struct.c/base`, `const.`,
+  `l.save/add/remove/change/count/find/find.index`), boolean names
+  (`is.ready`, `is.fight.over`), the `.r` round operator, list indexes
+  (`weapons[1]`), strings with escapes, numbers and comments (`//`).
 - **Real compiler diagnostics** — as you type, the bundled HAZMA
   compiler (the exact code the CLI runs, dependency-free) parses and
   fully analyzes your program and reports problems in the Problems
@@ -28,7 +29,9 @@ replace HTML, CSS and JavaScript.
 - **Snippets** — `save`, `change`, `t.change`, `log`, `if`, `ifelse`,
   `elseif`, `s.change`, `repeat`, `repeatnamed`, `repeat.break`,
   `repeat.continue`, `repeat.new`, `func`, `func.p`, `func.c`,
-  `func.r`, `struct`, `struct.base`, `struct.c`, `const.`.
+  `func.r`, `struct`, `struct.base`, `struct.c`, `const.`,
+  `l.save`, `l.add`, `l.remove`, `l.change`, `l.count`, `l.find`,
+  `l.find.index`, `l[index]`.
 
 ## Requirements
 
@@ -49,7 +52,7 @@ The compiler core is bundled at build time from the HAZMA repository:
 npm run build
 node scripts/bundle-extension.mjs   # copies dist/src -> vscode-hazma/core as .mjs
 cd vscode-hazma
-npx @vscode/vsce package            # produces hazma-0.1.0.vsix
+npx @vscode/vsce package            # produces hazma-0.2.0.vsix
 ```
 
 ## Known Issues

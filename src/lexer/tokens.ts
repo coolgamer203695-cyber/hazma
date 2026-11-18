@@ -43,4 +43,4 @@ export const RESERVED_WORDS: ReadonlySet<string> = new Set([
   "is",
 ]);
 
-export const PUNCT_SYMBOLS = [":", "=", "==", "!=", ">=", "<=", ">", "<", "+", "-", "*", "/", ",", "(", ")", "{", "}"] as const;
+export const PUNCT_SYMBOLS = [":", "=", "==", "!=", ">=", "<=", ">", "<", "+", "-", "*", "/", ",", "(", ")", "{", "}", "[", "]"] as const;

@@ -131,6 +131,62 @@ and `boolean + number` are compile errors (H3005). Numbers `+` numbers add.
 `>` `<` `>=` `<=` are rejected at compile time for strings (H3006) rather
 than inventing an ordering for text.
 
+### D20 — `l.remove` removes the first matching occurrence only
+
+Removing by value when duplicates exist is ambiguous. The locked rule is:
+remove exactly one element — the first match, the same occurrence
+`l.find.index` reports. Later duplicates stay. Removing a missing value is
+a runtime error (H4063), not a silent no-op.
+
+### D21 — `l.change` uses a 1-based numeric index
+
+The left side of `l.change` is a position, never a value: `2 = "Rifle"`.
+This keeps `l.change` (position) distinct from `l.remove`/`l.find`
+(value). The original sketch's `"Gun" = "Rifle"` example was a
+documentation error; the written rule wins.
+
+### D22 — `l.find` is a boolean; `l.find.index` is the position
+
+`l.find` returns `true`/`false` only. The first matching position is
+available separately as `l.find.index`. This keeps both usable inside
+`if :` conditions and avoids a value that means two things.
+
+`l.find.index` returns **0** when the value is absent. Indexes start at 1,
+so 0 is an unambiguous "not found" marker.
+
+### D23 — Lists are reference values
+
+A list variable holds a reference, like a structure instance. Assigning a
+list or passing it to a function shares the same list; `l.add` inside a
+function is visible to the caller. `repeat.new` restores deep copies of
+snapshotted variables, so restarted loops get fresh lists. `==` compares
+lists by identity. This mirrors the existing structure rules rather than
+introducing a second value model.
+
+### D24 — Struct defaults may hold list literals
+
+`items = { "map" }` is a valid structure default. Each instance
+const-evaluates its own defaults, so every instance receives its own list.
+`l.add`/`l.remove`/`l.change` accept property paths (`bag.items`), not
+just bare variables.
+
+### D25 — `l.save :` requires a list literal
+
+`l.save : name = { ... }` creates a list from a literal. Storing a list
+returned by a function uses ordinary `save : name = func.c : ...`, which
+already infers the list type. Mixing the two forms would make `l.save`
+sometimes a declaration and sometimes an assignment; H2067 explains the
+distinction.
+
+### D26 — Lists keep one element type
+
+`l.add` and `l.change` accept only values matching the list's inferred
+element type (H3064). A literal that mixes value types is a list of
+anything, and so is an empty list, so those accept every value.
+`l.find` and `l.remove` stay permissive on purpose: a value of another
+type simply never matches, and removing it reports the same missing-value
+error (H4063).
+
 ---
 
 ## 2. Open questions

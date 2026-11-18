@@ -161,7 +161,7 @@ export function tokenize(source: string): Token[] {
       col += 2;
       continue;
     }
-    if (":=><+-*/,(){}".includes(c)) {
+    if (":=><+-*/,(){}[]".includes(c)) {
       push("punct", c, sl, sc);
       i++;
       col++;

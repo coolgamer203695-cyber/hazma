@@ -263,6 +263,72 @@ export class Parser {
       return { kind: "t.change", target, expr, span: this.spanFrom(start) };
     }
 
+    // ------------------------------------------------------------- lists
+    // l.save : name = { ... }
+    if (t.text === "l.save") {
+      this.next();
+      this.expectColon("l.save");
+      const target = this.varTarget("after l.save :");
+      this.expectPunct("=", "after the list name");
+      if (!this.check("punct", "{")) {
+        throw new HazmaError(
+          "H2067",
+          `l.save : needs a list written with { }, but found ${describeToken(this.peek())}`,
+          spanTok(this.peek()),
+          "to store a list returned by a function, use: save : name = func.c : ...",
+        );
+      }
+      this.next();
+      const items = this.parseListItems("the list");
+      return { kind: "l.save", target, items, span: this.spanFrom(start) };
+    }
+
+    // l.add : name { ... }
+    if (t.text === "l.add") {
+      this.next();
+      this.expectColon("l.add");
+      const target = this.pathTarget("after l.add :");
+      this.expectPunct("{", "to open the l.add block");
+      const items = this.parseListItems("the l.add block");
+      return { kind: "l.add", target, items, span: this.spanFrom(start) };
+    }
+
+    // l.remove : name { ... }
+    if (t.text === "l.remove") {
+      this.next();
+      this.expectColon("l.remove");
+      const target = this.pathTarget("after l.remove :");
+      this.expectPunct("{", "to open the l.remove block");
+      const values = this.parseListItems("the l.remove block");
+      return { kind: "l.remove", target, values, span: this.spanFrom(start) };
+    }
+
+    // l.change : name { index = value ... }
+    if (t.text === "l.change") {
+      this.next();
+      this.expectColon("l.change");
+      const target = this.pathTarget("after l.change :");
+      const changes = this.parseListChanges();
+      return { kind: "l.change", target, changes, span: this.spanFrom(start) };
+    }
+
+    if (parts[0] === "l") {
+      if (t.text === "l.count" || t.text === "l.find" || t.text === "l.find.index") {
+        throw new HazmaError(
+          "H2060",
+          `"${t.text}" is a value, not a command`,
+          spanTok(t),
+          "use it inside log.out or a condition: log.out { l.count : weapons }",
+        );
+      }
+      throw new HazmaError(
+        "H2061",
+        `unknown command "${t.text}"`,
+        spanTok(t),
+        "the list commands are l.save, l.add, l.remove and l.change",
+      );
+    }
+
     // log.out { expr }
     if (parts[0] === "log") {
       if (parts.length !== 2 || parts[1] !== "out") {
@@ -730,6 +796,102 @@ export class Parser {
     return props;
   }
 
+  // ------------------------------------------------------------------ lists
+
+  /** `{ element ... }` - elements separated by newlines and/or commas. */
+  private parseListItems(what: string): Expr[] {
+    const items: Expr[] = [];
+    this.skipNewlines();
+    while (!this.check("punct", "}")) {
+      if (this.check("eof")) {
+        throw new HazmaError("H2062", `${what} is not closed - missing }`, spanTok(this.peek()));
+      }
+      if (this.check("punct", ",")) {
+        this.next();
+        this.skipNewlines();
+        continue;
+      }
+      items.push(this.parseExpression());
+      const t = this.peek();
+      if (t.kind === "punct" && t.text === "}") break;
+      if (t.kind === "newline") {
+        this.skipNewlines();
+        continue;
+      }
+      if (t.kind === "punct" && t.text === ",") {
+        this.next();
+        this.skipNewlines();
+        continue;
+      }
+      if (t.kind === "eof") {
+        throw new HazmaError("H2062", `${what} is not closed - missing }`, spanTok(t));
+      }
+      throw new HazmaError(
+        "H2011",
+        `unexpected ${describeToken(t)} after a list element`,
+        spanTok(t),
+        "list elements are separated by newlines or commas",
+      );
+    }
+    this.expectPunct("}", `to close ${what}`);
+    return items;
+  }
+
+  /** `{ index = value ... }` lines for l.change (1-based indexes, validated later). */
+  private parseListChanges(): { index: Expr; value: Expr; span: Span }[] {
+    this.expectPunct("{", "to open the l.change block");
+    const changes: { index: Expr; value: Expr; span: Span }[] = [];
+    this.skipNewlines();
+    while (!this.check("punct", "}")) {
+      if (this.check("eof")) {
+        throw new HazmaError(
+          "H2064",
+          "the l.change block is not closed - missing }",
+          spanTok(this.peek()),
+        );
+      }
+      if (this.check("punct", ",")) {
+        this.next();
+        this.skipNewlines();
+        continue;
+      }
+      const index = this.parseExpression();
+      this.expectPunct("=", "after the list index");
+      const value = this.parseExpression();
+      changes.push({ index, value, span: span2(index.span, value.span) });
+      const t = this.peek();
+      if (t.kind === "punct" && t.text === "}") break;
+      if (t.kind === "newline") {
+        this.skipNewlines();
+        continue;
+      }
+      if (t.kind === "punct" && t.text === ",") {
+        this.next();
+        this.skipNewlines();
+        continue;
+      }
+      if (t.kind === "eof") {
+        throw new HazmaError("H2064", "the l.change block is not closed - missing }", spanTok(t));
+      }
+      throw new HazmaError(
+        "H2011",
+        `unexpected ${describeToken(t)} after a list change`,
+        spanTok(t),
+        'each line looks like: 2 = "Rifle"',
+      );
+    }
+    this.expectPunct("}", "to close the l.change block");
+    if (changes.length === 0) {
+      throw new HazmaError(
+        "H2065",
+        "l.change needs at least one index = value line",
+        spanTok(this.prev()),
+        'example: l.change : weapons { 2 = "Rifle" }',
+      );
+    }
+    return changes;
+  }
+
   // ------------------------------------------------------------ declarations
 
   private parseStructDecl(start: number): StructDecl {
@@ -825,9 +987,20 @@ export class Parser {
 
   private parsePostfix(): Expr {
     let e = this.parsePrimary();
-    while (this.check("punct", ".r")) {
-      this.next();
-      e = { kind: "round", inner: e, span: span2(e.span, spanTok(this.prev())) };
+    while (true) {
+      if (this.check("punct", ".r")) {
+        this.next();
+        e = { kind: "round", inner: e, span: span2(e.span, spanTok(this.prev())) };
+        continue;
+      }
+      if (this.check("punct", "[")) {
+        this.next();
+        const index = this.parseExpression();
+        this.expectPunct("]", "to close the list index");
+        e = { kind: "index", target: e, index, span: span2(e.span, spanTok(this.prev())) };
+        continue;
+      }
+      break;
     }
     return e;
   }
@@ -853,6 +1026,13 @@ export class Parser {
       return { ...e, span: span2(spanTok(t), spanTok(this.prev())) };
     }
 
+    // { element ... } - a list literal in value position
+    if (t.kind === "punct" && t.text === "{") {
+      this.next();
+      const items = this.parseListItems("the list");
+      return { kind: "list.lit", items, span: this.spanFrom(start) };
+    }
+
     if (t.kind === "ident") {
       if (t.text === "true" || t.text === "false") {
         this.next();
@@ -876,6 +1056,54 @@ export class Parser {
         this.next();
         const call = this.parseFuncCall();
         return call;
+      }
+
+      // statement-only list commands cannot be used as values
+      if (
+        t.text === "l.save" ||
+        t.text === "l.add" ||
+        t.text === "l.remove" ||
+        t.text === "l.change"
+      ) {
+        throw new HazmaError(
+          "H2060",
+          `"${t.text}" is a command, not a value`,
+          spanTok(t),
+          `${t.text} stands on its own line - it cannot be used inside an expression`,
+        );
+      }
+
+      // l.count : list
+      if (t.text === "l.count") {
+        this.next();
+        this.expectColon("l.count");
+        const list = this.parsePostfix();
+        return { kind: "list.count", list, span: this.spanFrom(start) };
+      }
+
+      // l.find : list { value }   /   l.find.index : list { value }
+      if (t.text === "l.find" || t.text === "l.find.index") {
+        const isIndex = t.text === "l.find.index";
+        const name = isIndex ? "l.find.index" : "l.find";
+        this.next();
+        this.expectColon(name);
+        const list = this.parsePostfix();
+        this.expectPunct("{", `to open the ${name} block`);
+        this.skipNewlines();
+        if (this.check("punct", "}")) {
+          throw new HazmaError(
+            "H2066",
+            `${name} needs a value to search for`,
+            spanTok(this.peek()),
+            `example: ${name} : weapons { "Sword" }`,
+          );
+        }
+        const value = this.parseExpression();
+        this.skipNewlines();
+        this.expectPunct("}", `to close the ${name} block`);
+        return isIndex
+          ? { kind: "list.find.index", list, value, span: this.spanFrom(start) }
+          : { kind: "list.find", list, value, span: this.spanFrom(start) };
       }
 
       for (const p of parts) {

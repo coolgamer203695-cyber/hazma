@@ -2,7 +2,7 @@
   "name": "hazma",
   "displayName": "HAZMA Language",
   "description": "HAZMA - one language for building websites and web applications. Syntax highlighting, real compiler diagnostics, snippets and a run button for .hz files.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "hazma-lang",
   "repository": {
     "type": "git",

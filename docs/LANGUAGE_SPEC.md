@@ -1,6 +1,6 @@
 # The HAZMA Language Specification
 
-**Version 0.1.0 — Phase 1–8 (text interpreter)**
+**Version 0.2.0 — Phase 1–8 (text interpreter, Lists included)**
 
 HAZMA is one language intended to eventually replace HTML, CSS and JavaScript
 for building websites and web applications. This document specifies the core
@@ -42,6 +42,7 @@ parameter names or values used in expressions:
 save  change  t.change  log   if    else   s
 repeat  func  struct  till  default  and  or  not
 true  false  const  is
+l.save  l.add  l.remove  l.change  l.count  l.find  l.find.index
 ```
 
 Notes:
@@ -50,6 +51,8 @@ Notes:
   valid boolean variable names of any depth.
 - `r` is not in this list, but property named `r` is forbidden because `.r`
   is the round suffix (error H3034).
+- The `l.*` names are commands; `l.count`, `l.find` and `l.find.index`
+  are values and cannot be used as variable names.
 
 ### 1.5 Numbers
 
@@ -65,16 +68,17 @@ strings.
 ### 1.7 Operators
 
 ```
-:   =   ==   !=   >=   <=   >   <   +   -   *   /   ,   (   )   {   }
+:   =   ==   !=   >=   <=   >   <   +   -   *   /   ,   (   )   {   }   [   ]
 ```
 
 The postfix round operator is written `.r` and lexes as its own token.
+`[` `]` delimit 1-based list indexes (§10.5).
 
 ---
 
 ## 2. Values and types
 
-Four types exist today:
+Five types exist today:
 
 | Type    | Written as          | Notes                                       |
 | ------- | ------------------- | ------------------------------------------- |
@@ -82,8 +86,9 @@ Four types exist today:
 | string  | `"Alex"`            | compared with `==` / `!=` at runtime        |
 | boolean | `true`, `false`     | variables holding booleans **must** be named `is.*` |
 | struct  | `struct.c : name {}`| instance of a declared structure            |
+| list    | `{ "Sword" "Gun" }` | mutable, ordered, allows duplicates (§10)   |
 
-There is deliberately no `null`, no list/array and no map yet **[planned]**.
+There is deliberately no `null` and no map yet **[planned]**.
 
 ### 2.1 Boolean naming (`is.`)
 
@@ -140,7 +145,8 @@ log.out { expression }
 Prints one value per command:
 
 - strings print without quotes, numbers plainly, booleans as `true`/`false`,
-  and structure instances as `name{ prop: value, ... }`.
+  lists as `[Sword, Gun]`, and structure instances as
+  `name{ prop: value, ... }`.
 - `+` joins text with anything (numbers are converted); `string + boolean`
   is allowed.
 
@@ -344,7 +350,149 @@ save : g = struct.c : npc_structure {
 
 ---
 
-## 10. Expressions and precedence
+## 10. Lists
+
+Lists are a native type: a **mutable, ordered** collection of supported
+values (text, numbers, Booleans, structure instances and other lists).
+Duplicates are allowed and insertion order is preserved everywhere.
+
+### 10.1 Creating a list — `l.save :`
+
+```hazma
+l.save : weapons = {
+    "Sword"
+    "Gun"
+    "Bow"
+}
+```
+
+- `l.save :` creates a new list bound to a name. Elements sit between
+  `{ }`, one per line; commas are also accepted as separators.
+- `l.save : name = { }` creates an empty list.
+- The element type is inferred from the elements. An empty list starts as
+  a list of anything and accepts values of any type later; a literal that
+  mixes value types is also a list of anything.
+- `l.add` and `l.change` must store values that match the list's element
+  type (H3064); lists of anything accept every value.
+- Re-running `l.save :` re-initializes the variable with a fresh list,
+  exactly like `save :`.
+- `l.save :` only accepts a list literal. To store a list returned by a
+  function use `save : name = func.c : ...` (H2067 otherwise).
+
+### 10.2 Adding elements — `l.add :`
+
+```hazma
+l.add : weapons {
+    "Shield"
+    "Dagger"
+}
+```
+
+- Appends one or more elements in the order written.
+- Duplicates are allowed.
+- The target may be a plain variable or a property path such as
+  `bag.items` (lists inside structures are supported).
+- The target must be a list (H3062 at compile time, H4064 at runtime).
+- The added values must match the list's element type (H3064).
+
+### 10.3 Removing elements — `l.remove :`
+
+```hazma
+l.remove : weapons {
+    "Gun"
+}
+```
+
+- Removes elements **by value**, never by index. Numeric values are
+  treated as values: `l.remove : numbers { 20 }` removes the value `20`.
+- When a value appears more than once, **only the first matching
+  occurrence is removed** (the same occurrence `l.find.index` reports).
+- Removing a value that is not present is a runtime error (H4063). It is
+  never a silent no-op.
+
+### 10.4 Changing elements — `l.change :`
+
+```hazma
+l.change : weapons {
+    2 = "Rifle"
+}
+```
+
+- The left side is a **1-based index**; the right side is the new value.
+- The element keeps its position; only its value changes.
+- The index must be a whole number starting at 1 (H3063 when the type is
+  known to be wrong, H4061 for 0/negative/fractional values at runtime)
+  and must exist in the list (H4062).
+- The new value must match the list's element type (H3064).
+- Several lines may change several elements in one block.
+
+### 10.5 Reading elements — `list[index]`
+
+```hazma
+log.out {
+    weapons[1]
+}
+```
+
+- Indexing is **1-based**: `weapons[1]` is the first element.
+- Indexing a non-list is H3060 (compile time) / H4060 (runtime).
+- A non-numeric index is H3061; `0`, negative or fractional indexes are
+  H4061; an index past the end is H4062.
+- Indexing nests: `grid[2][1]`.
+
+### 10.6 Counting — `l.count :`
+
+```hazma
+log.out {
+    l.count : weapons
+}
+```
+
+Returns the number of elements. An empty list returns `0`.
+
+### 10.7 Searching — `l.find :` and `l.find.index :`
+
+```hazma
+log.out {
+    l.find : weapons {
+        "Sword"
+    }
+}
+
+log.out {
+    l.find.index : weapons {
+        "Sword"
+    }
+}
+```
+
+- `l.find` returns `true` or `false`.
+- `l.find.index` returns the 1-based position of the **first** matching
+  occurrence, or `0` when the value is absent. `0` is deliberately not a
+  valid position, so it is an unambiguous "not found" marker.
+- Both are values and can be used in `log.out`, `save :` and `if :`
+  conditions.
+- Values are compared with HAZMA's equality rules: values of different
+  types never match (the number `1` and the text `"1"` are different).
+
+### 10.8 Reference semantics
+
+Like structure instances, a list is a **reference value**: assigning it or
+passing it to a function shares the same list, so `l.add` inside a
+function is visible to the caller. `repeat.new` restores a deep copy of
+the variables it snapshots, so a restarted repeat gets fresh lists.
+
+Lists compare with `==` / `!=` by identity, not element by element.
+
+### 10.9 Lists in functions and structures
+
+- Function parameters can receive lists and mutate them with
+  `l.add` / `l.remove` / `l.change`.
+- A structure property may default to a list literal:
+  `items = { "map" }`. Every instance receives its own list.
+- Lists may contain structure instances and other lists.
+
+## 11. Expressions and precedence
 
 Loosest to tightest:
 
@@ -355,9 +503,11 @@ Loosest to tightest:
 5. `+` `-`
 6. `*` `/`
 7. unary `-`
-8. postfix `.r`
-9. primary: number, string, `true`, `false`, `( expr )`, variable/path,
-   `struct.c : name {...}`, `func.c : name {...}`
+8. postfix `.r` and `[ index ]`
+9. primary: number, string, `true`, `false`, `( expr )`, list literal,
+   variable/path, `struct.c : name {...}`, `func.c : name {...}`,
+   `l.count : list`, `l.find : list { value }`,
+   `l.find.index : list { value }`
 
 Type rules:
 
@@ -371,7 +521,7 @@ Type rules:
 
 ---
 
-## 11. Program structure
+## 12. Program structure
 
 A program is a sequence of top-level statements. `struct` and `func`
 declarations may appear anywhere at the top level; references to globals
@@ -380,7 +530,7 @@ top to bottom; paused repeats are kept alive until the program ends.
 
 ---
 
-## 12. Diagnostics
+## 13. Diagnostics
 
 Every problem is an `H` code + message + file/line/col span + optional
 `help:` line. Ranges:
@@ -392,7 +542,7 @@ Every problem is an `H` code + message + file/line/col span + optional
 | H3xxx   | semantic analyzer|
 | H4xxx   | runtime          |
 
-### 12.1 Lexer (H1xxx)
+### 13.1 Lexer (H1xxx)
 
 | Code  | Message                                           |
 | ----- | ------------------------------------------------- |
@@ -400,7 +550,7 @@ Every problem is an `H` code + message + file/line/col span + optional
 | H1002 | unterminated string - missing closing "           |
 | H1004 | unknown escape sequence \x                        |
 
-### 12.2 Parser (H2xxx)
+### 13.2 Parser (H2xxx)
 
 | Code  | Message |
 | ----- | ------- |
@@ -443,8 +593,15 @@ Every problem is an `H` code + message + file/line/col span + optional
 | H2045 | the reserved word "p" cannot be used as a value |
 | H2046 | expected a value but found ... |
 | H2047 | arguments block for "name" is not closed - missing } |
+| H2060 | "x" is a value, not a command / "x" is a command, not a value |
+| H2061 | unknown command "l.x" (the list commands are named in the help) |
+| H2062 | the list is not closed - missing } |
+| H2064 | the l.change block is not closed - missing } |
+| H2065 | l.change needs at least one index = value line |
+| H2066 | l.find / l.find.index needs a value to search for |
+| H2067 | l.save : needs a list written with { } |
 
-### 12.3 Semantic analyzer (H3xxx)
+### 13.3 Semantic analyzer (H3xxx)
 
 | Code  | Message |
 | ----- | ------- |
@@ -493,8 +650,13 @@ Every problem is an `H` code + message + file/line/col span + optional
 | H3055 | the structure "S" must be declared at the top level |
 | H3056 | func.p can only be used inside a function |
 | H3057 | recursive calls are not allowed: a calls b calls a |
+| H3060 | a number cannot be indexed - only lists are indexed |
+| H3061 | list indexes are whole numbers starting at 1 |
+| H3062 | l.add / l.remove / l.change / l.count / l.find needs a list |
+| H3063 | l.change indexes by position - the left side must be a whole number |
+| H3064 | the list "x" holds text, so a number cannot be added |
 
-### 12.4 Runtime (H4xxx)
+### 13.4 Runtime (H4xxx)
 
 | Code  | Message |
 | ----- | ------- |
@@ -521,16 +683,21 @@ Every problem is an `H` code + message + file/line/col span + optional
 | H4031 | division by zero |
 | H4032 | ">" compares numbers, but this is a string and a number |
 | H4033 | condition/not must be true or false |
+| H4060 | a number cannot be indexed - only lists are indexed (runtime) |
+| H4061 | list indexes are whole numbers starting at 1, but the index is 0 |
+| H4062 | index 5 is out of range - the list has 2 elements |
+| H4063 | "Gun" is not in "weapons", so it cannot be removed |
+| H4064 | l.add / l.remove / l.change / l.count / l.find needs a list |
 | H4099 | func.r was used outside a function (internal guard) |
 
 ---
 
-## 13. What is implemented vs planned
+## 14. What is implemented vs planned
 
 Implemented (phases 1–8): lexer, parser, AST, semantic analysis with a
 full diagnostic model, tree-walking interpreter with the frame-based
-repeat pause/resume machine, CLI (`run`, `check`, `ast`, `new`, `version`,
-`help`), test suite, examples, docs.
+repeat pause/resume machine, the native List system, CLI (`run`, `check`,
+`ast`, `new`, `version`, `help`), test suite, examples, docs.
 
 Architected but **not built** (phase 9+): a bytecode compiler and VM, the
 web/document layer (elements, styling, events replacing HTML/CSS/JS DOM),

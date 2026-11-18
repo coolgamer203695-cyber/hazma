@@ -1,0 +1,55 @@
+// 07_lists.hz - the native List system in one tour.
+
+l.save : weapons = {
+    "Sword"
+    "Gun"
+    "Bow"
+}
+
+log.out { weapons }                          // [Sword, Gun, Bow]
+log.out { l.count : weapons }                // 3
+log.out { weapons[1] }                       // Sword
+
+log.out { l.find : weapons { "Gun" } }       // true
+log.out { l.find.index : weapons { "Gun" } } // 2
+log.out { l.find : weapons { "Shield" } }    // false
+log.out { l.find.index : weapons { "Shield" } } // 0
+
+l.add : weapons {
+    "Shield"
+    "Dagger"
+}
+log.out { weapons }
+
+l.change : weapons {
+    2 = "Rifle"
+}
+log.out { weapons }
+
+l.remove : weapons {
+    "Bow"
+}
+log.out { weapons }
+
+// numeric values are removed as values, not as indexes
+l.save : numbers = {
+    10
+    20
+    30
+}
+l.remove : numbers { 20 }
+log.out { numbers }                          // [10, 30]
+
+// duplicates keep their positions; l.find.index reports the first match
+l.save : items = {
+    "Apple"
+    "Apple"
+    "Banana"
+}
+log.out { l.find.index : items { "Apple" } } // 1
+l.remove : items { "Apple" }
+log.out { items }                            // [Apple, Banana]
+
+// an empty list is valid
+l.save : empty = { }
+log.out { l.count : empty }                  // 0

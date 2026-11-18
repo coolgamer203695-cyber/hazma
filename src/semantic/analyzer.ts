@@ -32,7 +32,8 @@ export type Type =
   | { k: "boolean" }
   | { k: "void" }
   | { k: "any" }
-  | { k: "struct"; name: string };
+  | { k: "struct"; name: string }
+  | { k: "list"; of: Type };
 
 export const T_NUMBER: Type = { k: "number" };
 export const T_STRING: Type = { k: "string" };
@@ -43,7 +44,8 @@ export const T_ANY: Type = { k: "any" };
 export function typeEq(a: Type, b: Type): boolean {
   if (a.k === "any" || b.k === "any") return true;
   if (a.k !== b.k) return false;
-  if (a.k === "struct" && b.k === "struct") return a.name === b.name;
+  if (a.k === "struct") return b.k === "struct" && a.name === b.name;
+  if (a.k === "list") return b.k === "list" && typeEq(a.of, b.of);
   return true;
 }
 
@@ -55,6 +57,20 @@ export function typeName(t: Type): string {
     case "void": return "nothing";
     case "any": return "a value";
     case "struct": return `a ${t.name} instance`;
+    case "list": return "a list";
+  }
+}
+
+/** Plural element description used in list diagnostics. */
+function elementName(t: Type): string {
+  switch (t.k) {
+    case "number": return "numbers";
+    case "string": return "text";
+    case "boolean": return "true/false values";
+    case "struct": return `${t.name} instances`;
+    case "list": return "lists";
+    case "void": return "no values";
+    case "any": return "any values";
   }
 }
 
@@ -244,7 +260,7 @@ export class Analyzer {
    */
   private precollectGlobals(stmts: Stmt[]): void {
     for (const stmt of stmts) {
-      if (stmt.kind === "save" || stmt.kind === "assign") {
+      if (stmt.kind === "save" || stmt.kind === "assign" || stmt.kind === "l.save") {
         if (!this.globals.has(stmt.target[0])) {
           this.globals.set(stmt.target[0], { type: T_ANY, isParam: false });
         }
@@ -496,6 +512,12 @@ export class Analyzer {
         }
         return true;
       }
+      case "list.lit": {
+        for (const item of e.items) {
+          if (!this.validateDefault(item, false)) return false;
+        }
+        return true;
+      }
       default:
         this.error(
           "H3042",
@@ -514,6 +536,18 @@ export class Analyzer {
       case "boolean": return T_BOOLEAN;
       case "neg": return T_NUMBER;
       case "struct.c": return { k: "struct", name: e.structName };
+      case "list.lit": {
+        if (e.items.length === 0) return { k: "list", of: T_ANY };
+        let of = this.defaultType(e.items[0]);
+        for (const item of e.items.slice(1)) {
+          const t = this.defaultType(item);
+          if (!typeEq(of, t)) {
+            of = T_ANY;
+            break;
+          }
+        }
+        return { k: "list", of };
+      }
       default: return T_ANY;
     }
   }
@@ -569,6 +603,68 @@ export class Analyzer {
 
       case "t.change": {
         this.checkAssign(stmt.target, stmt.expr, ctx, { allowRetype: true });
+        break;
+      }
+
+      case "l.save": {
+        const name = stmt.target[0];
+        const type = this.listType(stmt.items, ctx);
+        this.checkIsNaming(name, type, stmt.span, `the list "${name}"`);
+        if (ctx.func && ctx.locals) {
+          if (this.globals.has(name)) {
+            this.error(
+              "H3007",
+              `the local list "${name}" has the same name as a global variable`,
+              stmt.span,
+              "rename the local list, or use change : to update the global one",
+            );
+            break;
+          }
+          const existing = ctx.locals.get(name);
+          if (existing?.isParam) {
+            this.error(
+              "H3008",
+              `"${name}" is already a parameter of "${ctx.func.name}"`,
+              stmt.span,
+              "use change : to update a parameter",
+            );
+            break;
+          }
+          ctx.locals.set(name, { type, isParam: false });
+        } else {
+          this.globals.set(name, { type, isParam: false });
+        }
+        break;
+      }
+
+      case "l.add": {
+        const t = this.requireListTarget(stmt.target, stmt.span, ctx, "l.add");
+        for (const item of stmt.items) {
+          this.requireElementType(t, item, ctx, stmt.target, "added");
+        }
+        break;
+      }
+
+      case "l.remove": {
+        this.requireListTarget(stmt.target, stmt.span, ctx, "l.remove");
+        for (const value of stmt.values) this.exprType(value, ctx);
+        break;
+      }
+
+      case "l.change": {
+        const t = this.requireListTarget(stmt.target, stmt.span, ctx, "l.change");
+        for (const c of stmt.changes) {
+          const it = this.exprType(c.index, ctx);
+          if (it.k !== "number" && it.k !== "any") {
+            this.error(
+              "H3063",
+              `l.change indexes by position - the left side must be a whole number starting at 1, but this is ${typeName(it)}`,
+              c.index.span,
+              'example: l.change : weapons { 2 = "Rifle" }',
+            );
+          }
+          this.requireElementType(t, c.value, ctx, stmt.target, "stored");
+        }
         break;
       }
 
@@ -784,6 +880,102 @@ export class Analyzer {
       case "func.c": {
         return this.analyzeCall(expr, ctx, true);
       }
+
+      case "list.lit": {
+        return this.listType(expr.items, ctx);
+      }
+
+      case "index": {
+        const targetType = this.exprType(expr.target, ctx);
+        const indexType = this.exprType(expr.index, ctx);
+        if (indexType.k !== "number" && indexType.k !== "any") {
+          this.error(
+            "H3061",
+            `list indexes are whole numbers starting at 1, but this is ${typeName(indexType)}`,
+            expr.index.span,
+            "index the list by position: weapons[1]",
+          );
+        }
+        if (targetType.k === "list") return targetType.of;
+        if (targetType.k === "any") return T_ANY;
+        this.error(
+          "H3060",
+          `${typeName(targetType)} cannot be indexed - only lists are indexed, like weapons[1]`,
+          expr.span,
+        );
+        return T_ANY;
+      }
+
+      case "list.count": {
+        this.requireListType(expr.list, ctx, "l.count");
+        return T_NUMBER;
+      }
+
+      case "list.find": {
+        this.requireListType(expr.list, ctx, "l.find");
+        this.exprType(expr.value, ctx);
+        return T_BOOLEAN;
+      }
+
+      case "list.find.index": {
+        this.requireListType(expr.list, ctx, "l.find.index");
+        this.exprType(expr.value, ctx);
+        return T_NUMBER;
+      }
+    }
+  }
+
+  /** The type of a list literal: a list whose element type is the common type. */
+  private listType(items: Expr[], ctx: Ctx): Type {
+    if (items.length === 0) return { k: "list", of: T_ANY };
+    const of = this.unifyTypes(items.map((e) => this.exprType(e, ctx)));
+    return { k: "list", of };
+  }
+
+  /** Check that an expression is a list (or an unknown `any` value). */
+  private requireListType(e: Expr, ctx: Ctx, op: string): void {
+    const t = this.exprType(e, ctx);
+    if (t.k !== "list" && t.k !== "any") {
+      this.error(
+        "H3062",
+        `${op} needs a list, but this is ${typeName(t)}`,
+        e.span,
+        "create a list first with: l.save : name = { ... }",
+      );
+    }
+  }
+
+  /** Check that l.add / l.remove / l.change point at an existing list. */
+  private requireListTarget(target: string[], span: Span, ctx: Ctx, op: string): Type {
+    const t = this.pathType(target, span, ctx);
+    if (t.k !== "list" && t.k !== "any") {
+      this.error(
+        "H3062",
+        `${op} needs a list, but "${target.join(".")}" is ${typeName(t)}`,
+        span,
+        "lists are created with: l.save : name = { ... }",
+      );
+    }
+    return t;
+  }
+
+  /** A value stored into a list must match the list's element type. */
+  private requireElementType(
+    listType: Type,
+    value: Expr,
+    ctx: Ctx,
+    target: string[],
+    verb: string,
+  ): void {
+    const vt = this.exprType(value, ctx);
+    if (listType.k !== "list") return; // unknown list: nothing more to check
+    if (!typeEq(listType.of, vt)) {
+      this.error(
+        "H3064",
+        `the list "${target.join(".")}" holds ${elementName(listType.of)}, so ${typeName(vt)} cannot be ${verb}`,
+        value.span,
+        "lists keep one element type; lists written with mixed values accept any value",
+      );
     }
   }
 
@@ -1323,6 +1515,14 @@ export class Analyzer {
         case "binary": addExpr(e.left); addExpr(e.right); break;
         case "struct.c": for (const o of e.overrides) addExpr(o.expr); break;
         case "func.c": for (const a of e.args) addExpr(a.expr); break;
+        case "list.lit": for (const item of e.items) addExpr(item); break;
+        case "index": addExpr(e.target); addExpr(e.index); break;
+        case "list.count": addExpr(e.list); break;
+        case "list.find":
+        case "list.find.index":
+          addExpr(e.list);
+          addExpr(e.value);
+          break;
         default: break;
       }
     };
@@ -1341,6 +1541,22 @@ export class Analyzer {
           case "t.change":
             addName(s.target);
             addExpr(s.expr);
+            break;
+          case "l.save":
+          case "l.add":
+            addName(s.target);
+            for (const item of s.items) addExpr(item);
+            break;
+          case "l.remove":
+            addName(s.target);
+            for (const value of s.values) addExpr(value);
+            break;
+          case "l.change":
+            addName(s.target);
+            for (const c of s.changes) {
+              addExpr(c.index);
+              addExpr(c.value);
+            }
             break;
           case "log": addExpr(s.expr); break;
           case "if":
@@ -1384,7 +1600,9 @@ export class Analyzer {
 
 /** Stable string key for a Type, used to detect inference changes. */
 function typeKey(t: Type): string {
-  return t.k === "struct" ? `struct:${t.name}` : t.k;
+  if (t.k === "struct") return `struct:${t.name}`;
+  if (t.k === "list") return `list:${typeKey(t.of)}`;
+  return t.k;
 }
 
 /** Collect every `func.r` expression inside a function body (recursively). */
