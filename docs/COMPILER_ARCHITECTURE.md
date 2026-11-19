@@ -1,9 +1,10 @@
 # HAZMA Compiler Architecture
 
-How the HAZMA toolchain is built (phases 1–8) and where it is going
-(phase 9). The implementation is TypeScript on Node.js, ESM with
-`NodeNext` module resolution, and has **zero runtime dependencies** —
-only `typescript` and `@types/node` as dev dependencies.
+How the HAZMA toolchain is built. The implementation is TypeScript on
+Node.js, ESM with `NodeNext` module resolution, and has **zero runtime
+dependencies** — only `typescript` and `@types/node` as dev dependencies.
+
+There are two execution paths from the same analyzed program:
 
 ```
 source (.hz)
@@ -18,16 +19,21 @@ source (.hz)
  Analyzer              src/semantic/analyzer.ts  → AnalysisResult
    │               (pass 0 + quiet fixpoint + body walks + diagnostics)
    ▼
- ┌────────────────────────────┬───────────────────────────────┐
- │ Interpreter (run)          │ diagnostics (check/CLI/IDE)   │
- │ src/runtime/interpreter.ts │ src/errors.ts                 │
- └────────────────────────────┴───────────────────────────────┘
+ ┌────────────────────────────┬───────────────────────────────┬─────────────────────────┐
+ │ Native backend (default)   │ Interpreter (--interpret)     │ diagnostics (check/IDE) │
+ │ src/backend/cgen.ts        │ src/runtime/interpreter.ts    │ src/errors.ts           │
+ │   → generated C            │                               │                         │
+ │ src/backend/runtime/       │                               │                         │
+ │   hazma_rt.c               │                               │                         │
+ │   → MSVC / clang / gcc     │                               │                         │
+ │   → native executable      │                               │                         │
+ └────────────────────────────┴───────────────────────────────┴─────────────────────────┘
 ```
 
 Entry points:
 
-- `src/index.ts` — public API used by tests and (later) the VS Code
-  extension: `runSource`, `analyze`, `parse`.
+- `src/index.ts` — public API used by tests and the VS Code extension:
+  `runSource`, `analyze`, `parse`.
 - `src/cli.ts` — `runCli(argv)`; `bin/hazma.js` is the shebang wrapper.
 - `dist/` holds the compiled output; tests import from `dist/`.
 
@@ -193,7 +199,13 @@ used by H3010/H3011 and friends.
 
 | Command            | Behavior                                  |
 | ------------------ | ----------------------------------------- |
-| `hazma run f.hz`   | compile then execute; diagnostics to stderr, `log.out` to stdout, exit 1 on failure |
+| `hazma run f.hz`   | compile to C, link a native executable, run it; `log.out` to stdout, exit 1 on failure |
+| `hazma run f.hz --interpret` | run with the tree-walking interpreter instead |
+| `hazma run f.hz --emit-c` | print the generated C, do not compile |
+| `hazma run f.hz --keep` | keep the temporary C/build files |
+| `hazma run f.hz -o out.exe` | compile only (new in 0.3) |
+| `hazma build f.hz -o out.exe` | compile only, write the executable |
+| `hazma interpret f.hz` | explicit interpreter alias |
 | `hazma check f.hz` | compile only; `no problems found in ...` on success |
 | `hazma ast f.hz`   | print the parsed statements (debug dump, `[line N]` annotations) |
 | `hazma new dir`    | scaffold `dir/app.hz` with a starter program |
@@ -206,34 +218,90 @@ invoked from `bin/hazma.js` (or import it yourself).
 
 ## 8. Tests (`tests/`, run with `npm test`)
 
-`npm test` = `tsc -p tsconfig.json` then
+`npm test` = `npm run build` then
 `node --test "dist/tests/*.test.js"` (the quoted glob matters: this Node
-does not accept a bare directory for `--test`). `tests/support.ts`
-provides `expectOut` (run + exact `log.out` lines) and `expectDiag`
-(expect a given H-code, optionally with a message fragment). The example
-programs in `examples/` are themselves tests: `tests/programs.test.ts`
-runs them and compares exact output.
+does not accept a bare directory for `--test`). `npm run build` compiles
+TypeScript and copies `hazma_rt.c` into `dist/`, because `tsc` does not
+copy non-TS assets. `tests/support.ts` provides `expectOut` (run + exact
+`log.out` lines) and `expectDiag` (expect a given H-code, optionally with
+a message fragment). The example programs in `examples/` are themselves
+tests: `tests/programs.test.ts` runs them through the interpreter and
+`tests/native.test.ts` compiles and runs them natively, comparing exact
+output. Native tests skip themselves when no C toolchain is present.
 
 ---
 
-## 9. Phase 9 and beyond **[planned — not implemented]**
+## 9. Native backend (`src/backend/`)
+
+The default `hazma run` path is a real compile-and-link:
+
+```
+AnalysisResult
+   │  cgen.ts
+   ▼
+program.c  ──#include "hazma_rt.c"──►  cl.exe /Feprogram.exe
+```
+
+- **`cgen.ts`** walks the typed IR and emits C. Globals live in one
+  `static HzGlobals G`; every function becomes a C function taking
+  `HzValue` arguments plus `int hasN` presence flags (for defaulted
+  parameters), and a local activation struct reached through an `HzValue`
+  pointer `a`. Struct factories `mkN()` start from the struct's literal
+  defaults, then apply `struct.c` overrides.
+- **`runtime/hazma_rt.c`** is included textually into each program, so
+  every helper can stay `static` and the build is one translation unit.
+  It provides tagged `HzValue`s (`HZ_NONE`, `HZ_NUM`, `HZ_STR`,
+  `HZ_BOOL`, `HZ_STRUCT`, `HZ_LIST`), strings, growing lists, structure
+  instances with a const-property table, arithmetic, equality, printing,
+  deep copy, and the runtime diagnostics H4xxx.
+- **Named repeats** compile to body functions `lbN(HzLoop *loop, void *ctx)`.
+  Loops that can be paused (`repeat.break` reachable) run on a **Windows
+  fiber**, so a paused loop keeps its entire C stack, including nested
+  loops and function calls. `repeat.new` restores generated snapshot
+  assignments (`gsnN[]` globals or `a->snN[]` activation arrays) before
+  resuming. Loops never paused run inline without a fiber.
+- **Rejected construct**: `func.r` inside any named repeat is reported as
+  **H5001**, because the loop body is a separate function and a value
+  cannot return through it. Everything else in the language compiles.
+- **`native.ts`** finds the toolchain, writes `program.c` + a `build.bat`
+  that calls `vcvars64.bat`, compiles, and either executes the binary
+  (`run`) or leaves it at `-o` (`build`). `HAZMA_CC` overrides the
+  compiler with `clang`/`gcc` (C11). Compiler diagnostics include the
+  generated file path; front-end diagnostics use the normal rendered
+  `file:line:col` format.
+- **Optimization**: pass `HAZMA_OPT=/Od` (or `-O0`, `-O3`, ...) to
+  override the default `/O2` / `-O2`; the choice is not hidden.
+
+### It is not a speed claim
+
+The generated C is ordinary C plus a dynamic-value runtime. Compile time,
+startup, runtime and memory must be measured per workload. `npm run bench`
+(`scripts/benchmark.mjs`) reports those four numbers separately for one
+program and prints no cross-language claim. On Windows, a cold build is
+dominated by `vcvars64.bat` (~9 s on the development machine); the code
+generation plus `cl /O2` compile and link is under a second. There is no
+benchmark in the repo asserting HAZMA beats C, C++ or Rust.
+
+---
+
+## 10. Future work **[planned — not implemented]**
 
 The architecture leaves room for:
 
-- **Bytecode compiler + VM**: `Analyzer`'s typed IR is the natural input;
-  the frame machine's `Frame`/`ip` model maps directly to a
+- **LLVM / direct object-code backend**: lower the typed IR to LLVM IR or
+  Cranelift to remove the C round-trip and the MSVC dependency. The
+  current C backend is the reference for semantics.
+- **Memory reclamation**: the native runtime allocates for the lifetime of
+  the process. A GC or arena scheme (and fiber cleanup) is future work.
+- **Bytecode compiler + VM**: an execution path with no external C
+  toolchain, useful on machines without MSVC. `Analyzer`'s typed IR is the
+  natural input; the frame machine's `Frame`/`ip` model maps directly to a
   `code[] + pc` VM with explicit loop-state objects, so the pause/resume
-  semantics (D6) survive compilation.
-- **Native machine-code backend**: a genuinely compiled HAZMA would lower
-  the typed IR (including the `list` type) to a lower-level IR, emit
-  object code through LLVM (or Cranelift), and link a native executable
-  per platform. This has **not been started** — `hazma run` still
-  executes the AST with the interpreter. No native executable is produced
-  today, and no performance comparison against C/C++/Rust is claimed.
+  semantics (D6) survive.
 - **Web layer**: the language's original goal — elements, styling and
   events as first-class HAZMA constructs replacing HTML/CSS/JS. This
   needs a new statement family and a host runtime (browser or Node
-  preview server); nothing in phases 1–8 hard-codes assumptions that
+  preview server); nothing shipped so far hard-codes assumptions that
   would block it.
 - **LSP / language server** for real IDE diagnostics beyond the basic
   VS Code extension shipped in phase 8.

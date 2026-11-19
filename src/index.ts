@@ -23,7 +23,7 @@ export { Analyzer } from "./semantic/analyzer.js";
 export type { AnalysisResult, StructIR, FuncIR, Type } from "./semantic/analyzer.js";
 export { Interpreter, StructInstance, ListValue, format } from "./runtime/interpreter.js";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 
 export function parse(source: string): Stmt[] {
   return new Parser(tokenize(source)).parseProgram();

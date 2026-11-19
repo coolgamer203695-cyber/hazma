@@ -25,6 +25,13 @@ describe("lexer", () => {
     assert.deepEqual(texts("log.out { is.ready }"), ["log.out", "{", "is.ready", "}", "\n", "<end of file>"]);
   });
 
+  it("ignores a leading UTF-8 BOM", () => {
+    assert.deepEqual(texts("\uFEFFsave : x = 1"), ["save", ":", "x", "=", "1", "\n", "<end of file>"]);
+    const t = tokenize("\uFEFFsave : x = 1");
+    assert.equal(t[0].line, 1);
+    assert.equal(t[0].col, 1);
+  });
+
   it("tracks 1-based line and column", () => {
     const t = tokenize("save : x = 1\nlog.out { x }");
     const logTok = t.find((x) => x.text === "log.out")!;

@@ -13,8 +13,9 @@ import { tokenize } from "./lexer/lexer.js";
 import { Parser } from "./parser/parser.js";
 import { Analyzer } from "./semantic/analyzer.js";
 import { Interpreter } from "./runtime/interpreter.js";
+import { runNative, buildNative } from "./backend/native.js";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 
 function fail(msg: string): never {
   console.error(msg);
@@ -42,6 +43,35 @@ export function compile(source: string, file: string) {
   return analyzer.analyze({ stmts });
 }
 
+/** Run a program through the tree-walking interpreter (the --interpret path). */
+function runInterpreted(source: string, file: string): void {
+  let result;
+  try {
+    result = compile(source, file);
+  } catch (e) {
+    if (e instanceof HazmaError) {
+      console.error(renderDiagnostic(source, file, { code: e.code, message: e.message, span: e.span, help: e.help }));
+      process.exit(1);
+    }
+    throw e;
+  }
+  if (result.diagnostics.length > 0) {
+    console.error(renderDiagnostics(source, file, result.diagnostics));
+    process.exit(1);
+  }
+  const output: string[] = [];
+  try {
+    new Interpreter(result, { out: (line) => output.push(line) }).run();
+    for (const line of output) process.stdout.write(line + "\n");
+  } catch (e) {
+    if (e instanceof HazmaError) {
+      console.error(renderDiagnostic(source, file, { code: e.code, message: e.message, span: e.span, help: e.help }));
+      process.exit(1);
+    }
+    throw e;
+  }
+}
+
 export function runCli(argv: string[]): void {
   const [cmd, ...rest] = argv;
 
@@ -51,7 +81,13 @@ export function runCli(argv: string[]): void {
     case "--help": {
       console.log(`HAZMA ${VERSION} - one language for the web
 
-  hazma run app.hz      compile and execute a program
+  hazma run app.hz      compile and execute a program (native by default)
+  hazma run app.hz --interpret   use the tree-walking interpreter
+  hazma run app.hz --emit-c      print the generated C instead of running
+  hazma run app.hz --keep        keep the temporary C files
+  hazma run app.hz -o out.exe    compile to an executable without running
+  hazma build app.hz -o app.exe  compile only, write a native executable
+  hazma interpret app.hz  run with the tree-walking interpreter
   hazma check app.hz    compile only, report problems
   hazma ast app.hz      print the parsed syntax tree
   hazma new my-app      create a starter project
@@ -67,30 +103,54 @@ export function runCli(argv: string[]): void {
 
     case "run": {
       const { source, file } = readProgram(rest[0], "run");
-      let result;
-      try {
-        result = compile(source, file);
-      } catch (e) {
-        if (e instanceof HazmaError) {
-          console.error(renderDiagnostic(source, file, { code: e.code, message: e.message, span: e.span, help: e.help }));
+      const interpret = rest.includes("--interpret") || rest.includes("-i");
+      const emitC = rest.includes("--emit-c");
+      const keep = rest.includes("--keep");
+      const outArg = rest.indexOf("-o");
+      const out = outArg >= 0 && rest[outArg + 1] ? rest[outArg + 1] : undefined;
+
+      if (interpret || emitC || out) {
+        // explicit requests use the native path too (emit-c / -o),
+        // --interpret keeps the tree-walking interpreter instead.
+        if (interpret) {
+          return runInterpreted(source, file);
+        }
+        const run = runNative({ file, out, emitC, keep, compileOnly: !!out });
+        if (run.exitCode !== 0) {
+          if (run.stderr) console.error(run.stderr);
           process.exit(1);
         }
-        throw e;
+        for (const line of run.output) process.stdout.write(line + "\n");
+        break;
       }
-      if (result.diagnostics.length > 0) {
-        console.error(renderDiagnostics(source, file, result.diagnostics));
+
+      // default: compile to native and execute
+      const run = runNative({ file, keep });
+      if (run.exitCode !== 0) {
+        if (run.stderr) console.error(run.stderr);
         process.exit(1);
       }
-      try {
-        new Interpreter(result).run();
-      } catch (e) {
-        if (e instanceof HazmaError) {
-          console.error(renderDiagnostic(source, file, { code: e.code, message: e.message, span: e.span, help: e.help }));
-          process.exit(1);
-        }
-        throw e;
-      }
+      for (const line of run.output) process.stdout.write(line + "\n");
       break;
+    }
+
+    case "build": {
+      const { source, file } = readProgram(rest[0], "build");
+      const outArg = rest.indexOf("-o");
+      const out = outArg >= 0 && rest[outArg + 1] ? rest[outArg + 1] : undefined;
+      if (!out) fail(`hazma build: provide an output, e.g. hazma build app.hz -o app.exe`);
+      const build = buildNative({ file, out });
+      if (build.exitCode !== 0) {
+        if (build.stderr) console.error(build.stderr);
+        process.exit(1);
+      }
+      console.log(`built ${out}`);
+      break;
+    }
+
+    case "interpret": {
+      const { source, file } = readProgram(rest[0], "interpret");
+      return runInterpreted(source, file);
     }
 
     case "check": {

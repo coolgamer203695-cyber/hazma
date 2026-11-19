@@ -1,6 +1,6 @@
-{
+﻿{
   "name": "hazma",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "HAZMA - one unified language for building websites and web applications. Compiler, runtime and toolchain.",
   "license": "MIT",
   "type": "module",
@@ -15,9 +15,10 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-runtime.mjs",
     "test": "npm run build && node --test \"dist/tests/*.test.js\"",
     "demo": "npm run build && node bin/hazma.js run examples/01_hello.hz",
+    "bench": "npm run build && node scripts/benchmark.mjs examples/benchmark.hz",
     "bundle:extension": "npm run build && node scripts/bundle-extension.mjs",
     "vsix": "npm run bundle:extension && cd vscode-hazma && npx @vscode/vsce package --no-dependencies"
   },

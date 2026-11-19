@@ -12,6 +12,9 @@ const isIdentStart = (c: string) =>
 const isIdentChar = (c: string) => isIdentStart(c) || isDigit(c);
 
 export function tokenize(source: string): Token[] {
+  // A UTF-8 BOM is common from Windows editors; it is not part of the source.
+  if (source.charCodeAt(0) === 0xfeff) source = source.slice(1);
+
   const tokens: Token[] = [];
   let i = 0;
   let line = 1;

@@ -1,13 +1,15 @@
 # The HAZMA Language Specification
 
-**Version 0.2.0 — Phase 1–8 (text interpreter, Lists included)**
+**Version 0.3.0 — Phase 1–8, native backend, Lists included**
 
 HAZMA is one language intended to eventually replace HTML, CSS and JavaScript
 for building websites and web applications. This document specifies the core
 language as it exists today: the lexical rules, the commands, the type rules
 and the runtime semantics. Everything here is implemented and covered by the
-test suite. Layers that are architected but not built yet (bytecode, the web
-document layer) are marked **[planned]** and are not described as if they
+test suite. `hazma run` compiles to a native executable by default; the
+tree-walking interpreter remains available as `hazma run --interpret`. Layers
+that are architected but not built yet (the web document layer, the direct
+LLVM backend) are marked **[planned]** and are not described as if they
 existed.
 
 ---
@@ -252,8 +254,13 @@ Semantics (this is the unusual part, chosen deliberately):
   global repeats) from inside any function; targeting a repeat that is
   frozen inside a paused repeat is H4021; restarting from inside itself
   is H4025 / H3051.
-- Continuing or restarting a repeat that already finished is H4022 /
-  H4024; restarting one that is running is H4020 / H4025.
+- Continuing a repeat that already finished is H4022 / H4024; restarting
+  one that is running is H4020 / H4025. `repeat.new` on a finished repeat
+  is allowed: it restores the snapshot and runs again from the top.
+- Native compilation note: a `func.r` inside a **named** repeat is
+  rejected with **H5001**, because a named repeat becomes its own C
+  function in the compiled program. Move the return outside the repeat,
+  or run with `hazma run --interpret`.
 
 Example trace (from the test suite):
 
@@ -690,15 +697,46 @@ Every problem is an `H` code + message + file/line/col span + optional
 | H4064 | l.add / l.remove / l.change / l.count / l.find needs a list |
 | H4099 | func.r was used outside a function (internal guard) |
 
+### 13.5 Native backend (H5xxx)
+
+These are produced only by the native code generator
+(`hazma run` / `hazma build`); `--interpret` never emits them.
+
+| Code  | Message | Meaning |
+| ----- | ------- | ------- |
+| H5000 | native compilation failed: ... | the C toolchain was missing, or the generated C did not compile; the message includes the compiler output and generated file path |
+| H5001 | func.r inside repeat "x" cannot be compiled natively yet | a named repeat is a separate C function, so it cannot return a value to its caller; move the `func.r` outside the repeat or use `hazma run --interpret` |
+
 ---
 
 ## 14. What is implemented vs planned
 
-Implemented (phases 1–8): lexer, parser, AST, semantic analysis with a
-full diagnostic model, tree-walking interpreter with the frame-based
-repeat pause/resume machine, the native List system, CLI (`run`, `check`,
-`ast`, `new`, `version`, `help`), test suite, examples, docs.
+Implemented (phases 1–8, plus the native backend): lexer, parser, AST,
+semantic analysis with a full diagnostic model, tree-walking interpreter
+with the frame-based repeat pause/resume machine, the native List system,
+a C-emitting native backend that produces real executables (MSVC by
+default, `HAZMA_CC` for clang/gcc), CLI (`run`, `build`, `interpret`,
+`check`, `ast`, `new`, `version`, `help`), test suite, examples, docs.
 
-Architected but **not built** (phase 9+): a bytecode compiler and VM, the
-web/document layer (elements, styling, events replacing HTML/CSS/JS DOM),
-a package manager, LSP language server, and the browser runtime.
+Still **not built**: a direct LLVM/object-code backend, memory
+reclamation in the native runtime, the web/document layer (elements,
+styling, events replacing HTML/CSS/JS DOM), a package manager, LSP
+language server, and the browser runtime.
+
+### 14.1 Native runtime limits (honest list)
+
+- **Windows fibers** implement named-repeat pause/resume. Programs using
+  `repeat.break` / `repeat.continue` / `repeat.new` need Windows today;
+  other targets can compile and run programs that do not use them.
+- **No reclamation.** Values, strings, lists and structure instances are
+  allocated and kept until the process exits. Long-running programs that
+  allocate in a loop grow.
+- **Fiber leaks.** A paused loop whose owning function has already
+  returned cannot be resumed; its fiber is not reclaimed.
+- **Runtime errors** print `runtime error[code]: message` plus
+  `--> file:line`. They do not include the caret excerpt or the `help:`
+  line that the analyzer prints at compile time.
+- **`func.r` in named repeats** is H5001 (see above).
+- **Performance is not claimed.** Generated C plus a dynamic-value
+  runtime should be measured against your workload; no comparison with
+  C, C++ or Rust is asserted.

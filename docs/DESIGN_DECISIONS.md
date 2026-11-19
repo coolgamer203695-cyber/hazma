@@ -69,9 +69,9 @@ errors out of the language entirely.
 ### D8 — Recursion is statically banned
 
 The call graph is checked; cycles are reported with the full cycle
-(H3057). Rationale: with no stacks growing per call, an interpreter-level
-pause/resume machine stays simple and predictable. This may be revisited
-in the bytecode phase **[planned phase 9]**.
+(H3057). Rationale: with no stacks growing per call, the pause/resume
+machine stays simple and predictable. This may be revisited once a future
+backend can bound call depth explicitly.
 
 ### D9 — Functions and structures live at top level
 
@@ -187,6 +187,60 @@ anything, and so is an empty list, so those accept every value.
 type simply never matches, and removing it reports the same missing-value
 error (H4063).
 
+### D27 — The native backend emits C, not machine code directly
+
+HAZMA compiles the analyzed AST to C, then invokes MSVC (`cl.exe`) or a
+C11 compiler named by `HAZMA_CC`. This keeps the backend small,
+inspectable (`--emit-c`) and portable across C toolchains, at the cost of
+a C compile step and a dependency on a host compiler. A future LLVM or
+Cranelift backend can replace the emitter without changing semantics.
+
+### D28 — `hazma run` is native; `--interpret` is the explicit escape hatch
+
+Compilation is the default so "compiled language" is not merely a label.
+The interpreter stays available because it is portable, needs no C
+toolchain, and covers the one construct the native backend rejects
+(`func.r` inside a named repeat). `hazma check` and the VS Code extension
+continue to use the analyzer only.
+
+### D29 — Named repeats compile to functions; pause/resume uses Windows fibers
+
+Every named repeat becomes `lbN(HzLoop*, void*)`. A loop that can pause
+runs on a Windows fiber, so its entire C stack — including nested loops
+and function calls — is preserved across `repeat.break`. Loops that can
+never pause run inline with no fiber. This is the only faithful way to
+keep D6's "pause, do not discard" semantics once control flow is
+compiled. Consequence: pause/resume is Windows-only for now.
+
+### D30 — `func.r` inside a named repeat is rejected with H5001
+
+A named repeat's body is a separate C function, so a `func.r` inside it
+would have to return through the loop body to the outer function. Rather
+than miscompile or silently change semantics, the generator rejects it
+with H5001 and a help line. Programs that need it use `--interpret`.
+
+### D31 — Native runtime allocates for the process lifetime (no GC yet)
+
+Strings, lists, structures and fibers are not reclaimed in 0.3. This is
+explicitly documented and tested for correctness, not presented as a
+memory story. Reclamation is future work and will not change observable
+language semantics.
+
+### D32 — Structure properties are looked up by name at runtime
+
+Generated C uses `hz_prop_get` / `hz_prop_slot` with the property name, so
+`any`-typed paths, inheritance and diagnostics stay consistent with the
+interpreter. `const` enforcement uses a per-structure `consts[]` table.
+This trades a small runtime lookup cost for simpler, safer code
+generation.
+
+### D33 — Native number printing approximates JavaScript `Number#toString`
+
+Integers below 1e21 print without a decimal point, other numbers use the
+shortest round-trip form, and exponents are normalized (`1e+21`). This
+keeps native `log.out` output byte-identical to the interpreter, which is
+what the example tests assert.
+
 ---
 
 ## 2. Open questions
@@ -236,8 +290,9 @@ without breaking anything; not designed yet.
 
 ### Q6 — Number literals beyond decimals
 
-No hex, exponents, separators, or negative zero handling yet. Phase 9
-(bytecode) will need a decision before serialization matters.
+No hex, exponents, separators, or negative zero handling yet. A future
+bytecode or direct-object backend will need a decision before
+serialization matters.
 
 ---
 

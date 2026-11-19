@@ -24,7 +24,8 @@ replace HTML, CSS and JavaScript.
 - **Run Program** — `Ctrl+F5`, the `$(play)` button in the editor title
   bar, the "Run HAZMA" code lens at the top of the file, or the command
   palette (`HAZMA: Run Program`). Output goes to the **HAZMA** output
-  channel.
+  channel. This runs the bundled interpreter so it works without a C
+  toolchain; use the CLI (`hazma run app.hz`) for a native executable.
 - **Check Program** — compile without executing.
 - **Snippets** — `save`, `change`, `t.change`, `log`, `if`, `ifelse`,
   `elseif`, `s.change`, `repeat`, `repeatnamed`, `repeat.break`,
@@ -58,8 +59,9 @@ npx @vscode/vsce package            # produces hazma-0.2.0.vsix
 ## Known Issues
 
 The extension reports exactly what the compiler reports. There is no
-language server yet (no hovers, no completions beyond snippets) — that
-is planned alongside the bytecode compiler phase.
+language server yet (no hovers, no completions beyond snippets). The run
+button uses the bundled interpreter, not the native backend, so it works
+without MSVC; use the CLI for native executables.
 
 ## License
 
