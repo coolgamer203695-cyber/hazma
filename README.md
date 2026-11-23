@@ -24,8 +24,10 @@ repeat : main {
 **Status: phases 1–8 complete and tested, plus a real native backend.
 `hazma run` now compiles HAZMA to C and links a native executable through
 MSVC (or `clang`/`gcc` via `HAZMA_CC`) instead of interpreting the tree.
-Lists are a native, fully integrated type. The web/document layer is
-architected for a later phase — nothing here fakes it.**
+Lists are a native, fully integrated type, and programs can read and write
+real files and folders with `check.error` guarding operations that may
+fail. The web/document layer is architected for a later phase — nothing
+here fakes it.**
 
 ---
 
@@ -62,6 +64,9 @@ HAZMA source  ->  lexer  ->  parser  ->  analyzer (typed IR)
     programs grow until exit.
   - Runtime errors print `file:line` and the H code, without the source
     caret excerpt the analyzer shows.
+  - A `check.error` outside a named repeat does not catch errors raised
+    inside that loop's fiber; put the guard inside the loop body or use
+    `--interpret`.
   - Abandoned paused loops whose owning function returned leak their fiber.
 - **No speed claim.** Compile time, startup, runtime and memory should be
   measured on your machine before comparing HAZMA with C, C++ or Rust.
@@ -99,10 +104,36 @@ HAZMA source  ->  lexer  ->  parser  ->  analyzer (typed IR)
   log.out { l.count : weapons }       // 2
   log.out { l.find.index : weapons { "Gun" } }   // 0
   ```
+- **Files and folders** — `file.create`, `file.write` / `file.add` with raw
+  text blocks, `file.delete`, `folder.create`, recursive `folder.delete`,
+  and the `file.read` / `file.exists` values:
+
+  ```
+  folder.create : "notes"
+  file.create : "notes/todo.txt"
+  file.write : "notes/todo.txt" {
+      Buy milk
+      Ship HAZMA
+  }
+  log.out { file.read : "notes/todo.txt" }
+  ```
+
+- **`check.error`** — guards the command directly above it. If that command
+  fails at runtime, the error is suppressed and the handler runs; otherwise
+  the handler is skipped. Works with every runtime error, including file and
+  folder failures, and compiles natively:
+
+  ```
+  save : text = file.read : "settings.txt"
+  check.error {
+      log.out { "settings.txt is missing — using defaults" }
+  }
+  ```
+
 - **Real diagnostics** — every problem has an `H` code, a precise
   span, a plain-English message and often a `help:` line
   (`error[H3012]: "age" holds a string and cannot be changed to a
-  number ... help: use t.change : age = ...`). 131 distinct codes.
+  number ... help: use t.change : age = ...`). 144 distinct codes.
 - **Real native executables** — `run`, `build`, `--emit-c`, `--keep`,
   `-o`, and `--interpret`, backed by a C runtime that implements values,
   strings, lists, structures, arithmetic, diagnostics and the named-repeat
@@ -113,9 +144,9 @@ HAZMA source  ->  lexer  ->  parser  ->  analyzer (typed IR)
 - **Examples** — `examples/01_hello.hz` through `examples/07_lists.hz`,
   each with exact-output tests (run natively and compared against the
   interpreter).
-- **Tests** — `npm test` runs the full suite (177 tests: lexer, parser,
-  semantics, runtime, lists, example programs, and native compile/run
-  tests that skip when no C toolchain is present).
+- **Tests** — `npm test` runs the full suite (208 tests: lexer, parser,
+  semantics, runtime, lists, files/folders, `check.error`, example programs,
+  and native compile/run tests that skip when no C toolchain is present).
 - **VS Code extension** — syntax highlighting, snippets, diagnostics
   reusing the real compiler, and a run button: see
   [`vscode-hazma/`](vscode-hazma/).
@@ -210,7 +241,7 @@ hazma/
 │   │   └── runtime/hazma_rt.c   # native C runtime
 │   ├── cli.ts  index.ts  errors.ts
 ├── scripts/copy-runtime.mjs
-├── tests/                  # node:test suite (177 tests)
+├── tests/                  # node:test suite (208 tests)
 ├── examples/               # 01_hello.hz ... 07_lists.hz, benchmark.hz
 ├── docs/                   # language spec, decisions, architecture
 └── vscode-hazma/           # VS Code extension (highlighting, diagnostics, run)

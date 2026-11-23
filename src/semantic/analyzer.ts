@@ -276,6 +276,9 @@ export class Analyzer {
         this.precollectGlobals(stmt.body);
       } else if (stmt.kind === "repeat.named") {
         this.precollectGlobals(stmt.body);
+      } else if (stmt.kind === "check.error") {
+        this.precollectGlobals([stmt.protectedStmt]);
+        this.precollectGlobals(stmt.handler);
       }
       // func bodies hold locals, struct bodies hold properties - skip both
     }
@@ -339,6 +342,9 @@ export class Analyzer {
           if (s.defaultBody) visit(s.defaultBody);
         } else if (s.kind === "repeat") {
           visit(s.body);
+        } else if (s.kind === "check.error") {
+          visit([s.protectedStmt]);
+          visit(s.handler);
         }
       }
     };
@@ -668,6 +674,31 @@ export class Analyzer {
         break;
       }
 
+      case "check.error": {
+        const guarded = stmt.protectedStmt.kind;
+        if (guarded === "repeat.break" || guarded === "repeat.continue" || guarded === "repeat.new") {
+          this.error(
+            "H3066",
+            "check.error cannot watch a command that pauses a repeat",
+            stmt.protectedStmt.span,
+            "move repeat.break : outside the command guarded by check.error",
+          );
+        }
+        this.walkStmt(stmt.protectedStmt, ctx);
+        this.walkStmts(stmt.handler, { ...ctx, atTop: false });
+        break;
+      }
+
+      case "file.create":
+      case "file.delete":
+      case "folder.create":
+      case "folder.delete":
+      case "file.write":
+      case "file.add": {
+        this.requireTextPath(stmt.path, ctx, stmt.kind);
+        break;
+      }
+
       case "log": {
         this.exprType(stmt.expr, ctx);
         break;
@@ -922,6 +953,16 @@ export class Analyzer {
         this.exprType(expr.value, ctx);
         return T_NUMBER;
       }
+
+      case "file.read": {
+        this.requireTextPath(expr.path, ctx, "file.read");
+        return T_STRING;
+      }
+
+      case "file.exists": {
+        this.requireTextPath(expr.path, ctx, "file.exists");
+        return T_BOOLEAN;
+      }
     }
   }
 
@@ -946,8 +987,20 @@ export class Analyzer {
   }
 
   /** Check that l.add / l.remove / l.change point at an existing list. */
-  private requireListTarget(target: string[], span: Span, ctx: Ctx, op: string): Type {
-    const t = this.pathType(target, span, ctx);
+  /** Every file/folder command takes the path as text. */
+  private requireTextPath(path: Expr, ctx: Ctx, op: string): void {
+    const t = this.exprType(path, ctx);
+    if (t.k !== "string" && t.k !== "any") {
+      this.error(
+        "H3065",
+        `${op} needs a text path, but this is ${typeName(t)}`,
+        path.span,
+        'write the path as text: ' + `${op} : "data.txt"`,
+      );
+    }
+  }
+
+  private requireListTarget(target: string[], span: Span, ctx: Ctx, op: string): Type {    const t = this.pathType(target, span, ctx);
     if (t.k !== "list" && t.k !== "any") {
       this.error(
         "H3062",
@@ -1523,6 +1576,10 @@ export class Analyzer {
           addExpr(e.list);
           addExpr(e.value);
           break;
+        case "file.read":
+        case "file.exists":
+          addExpr(e.path);
+          break;
         default: break;
       }
     };
@@ -1573,6 +1630,18 @@ export class Analyzer {
             if (s.cond) addExpr(s.cond);
             visit(s.body);
             break;
+          case "check.error":
+            visit([s.protectedStmt]);
+            visit(s.handler);
+            break;
+          case "file.create":
+          case "file.delete":
+          case "folder.create":
+          case "folder.delete":
+          case "file.write":
+          case "file.add":
+            addExpr(s.path);
+            break;
           case "func.c.stmt": for (const a of s.call.args) addExpr(a.expr); break;
           case "func.r": addExpr(s.expr); break;
           default: break;
@@ -1622,6 +1691,7 @@ function collectFuncReturns(stmts: Stmt[]): Expr[] {
           break;
         case "repeat": visit(s.body); break;
         case "repeat.named": visit(s.body); break;
+        case "check.error": visit([s.protectedStmt]); visit(s.handler); break;
         default: break;
       }
     }

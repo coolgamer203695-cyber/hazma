@@ -123,6 +123,8 @@ class Generator {
   private loopInfos = new Map<RepeatNamed, LoopInfo>();
   private loopCounter = 0;
   private tmpCounter = 0;
+  /** Names of the setjmp handlers active in the C function being emitted. */
+  private errHandlers: string[] = [];
 
   private out: string[] = [];
 
@@ -196,6 +198,9 @@ class Generator {
         if (stmt.defaultBody) this.collectGlobals(stmt.defaultBody);
       } else if (stmt.kind === "repeat" || stmt.kind === "repeat.named") {
         this.collectGlobals(stmt.body);
+      } else if (stmt.kind === "check.error") {
+        this.collectGlobals([stmt.protectedStmt]);
+        this.collectGlobals(stmt.handler);
       }
     }
   }
@@ -265,6 +270,10 @@ class Generator {
         case "repeat.named":
           this.collectLocals(stmt.body, add);
           break;
+        case "check.error":
+          this.collectLocals([stmt.protectedStmt], add);
+          this.collectLocals(stmt.handler, add);
+          break;
         default:
           break;
       }
@@ -300,6 +309,9 @@ class Generator {
         if (stmt.defaultBody) this.collectLoops(stmt.defaultBody, scope);
       } else if (stmt.kind === "repeat") {
         this.collectLoops(stmt.body, scope);
+      } else if (stmt.kind === "check.error") {
+        this.collectLoops([stmt.protectedStmt], scope);
+        this.collectLoops(stmt.handler, scope);
       }
     }
   }
@@ -327,6 +339,10 @@ class Generator {
           case "repeat":
           case "repeat.named":
             visit(stmt.body);
+            break;
+          case "check.error":
+            visit([stmt.protectedStmt]);
+            visit(stmt.handler);
             break;
           default:
             break;
@@ -366,6 +382,9 @@ class Generator {
           if (stmt.defaultBody) found = found.concat(findReturns(stmt.defaultBody));
         } else if (stmt.kind === "repeat" || stmt.kind === "repeat.named") {
           found = found.concat(findReturns(stmt.body));
+        } else if (stmt.kind === "check.error") {
+          found = found.concat(findReturns([stmt.protectedStmt]));
+          found = found.concat(findReturns(stmt.handler));
         }
       }
       return found;
@@ -495,6 +514,7 @@ class Generator {
   private emitLoopBody(info: LoopInfo): void {
     const scope = info.owner;
     this.tmpCounter = 0;
+    this.errHandlers = [];
     this.out.push(`static void lb${info.id}(HzLoop *loop, void *ctx) {`);
     this.out.push("  (void)loop;");
     if (scope.kind === "func") {
@@ -531,6 +551,7 @@ class Generator {
   }): void {
     const fn = info.fn;
     this.tmpCounter = 0;
+    this.errHandlers = [];
     this.out.push(`static HzValue ${this.fnName(info.id)}(${this.paramSignature(fn)}) {`);
     this.out.push(`  ${info.act} act;`);
     this.out.push(`  ${info.act} *a = &act;`);
@@ -569,6 +590,7 @@ class Generator {
 
   private emitMain(): void {
     this.tmpCounter = 0;
+    this.errHandlers = [];
     this.out.push("int main(void) {");
     this.out.push("  hz_rt_init();");
     const body: string[] = [];
@@ -700,6 +722,47 @@ class Generator {
         return;
       }
 
+      case "check.error": {
+        const tag = `hz_eh${this.tmpCounter++}`;
+        out.push(`${pad}{`);
+        out.push(`${pad}  HzErrHandler ${tag};`);
+        out.push(`${pad}  ${tag}.prev = hz_err_top;`);
+        out.push(`${pad}  hz_err_top = &${tag};`);
+        out.push(`${pad}  if (setjmp(${tag}.env) == 0) {`);
+        this.errHandlers.push(tag);
+        this.emitStmt(stmt.protectedStmt, scope, out, depth + 2);
+        this.errHandlers.pop();
+        out.push(`${pad}    hz_err_top = ${tag}.prev;`);
+        out.push(`${pad}  } else {`);
+        out.push(`${pad}    hz_err_top = ${tag}.prev;`);
+        this.errHandlers.push(tag);
+        this.emitStmts(stmt.handler, scope, out, depth + 2);
+        this.errHandlers.pop();
+        out.push(`${pad}  }`);
+        out.push(`${pad}}`);
+        return;
+      }
+
+      case "file.create":
+      case "file.delete":
+      case "folder.create":
+      case "folder.delete": {
+        const path = this.expr(stmt.path, scope);
+        out.push(...path.pre.map((l) => pad + l));
+        out.push(`${pad}hz_${stmt.kind.replace(".", "_")}(${path.code}, ${this.F}, ${this.line(stmt.span)});`);
+        return;
+      }
+
+      case "file.write":
+      case "file.add": {
+        const path = this.expr(stmt.path, scope);
+        out.push(...path.pre.map((l) => pad + l));
+        out.push(
+          `${pad}hz_file_write(${path.code}, hz_str(${cString(stmt.rawText)}), ${stmt.kind === "file.add" ? 1 : 0}, ${this.F}, ${this.line(stmt.span)});`,
+        );
+        return;
+      }
+
       case "log": {
         const value = this.expr(stmt.expr, scope);
         out.push(...value.pre.map((l) => pad + l));
@@ -815,6 +878,10 @@ class Generator {
         const value = this.expr(stmt.expr, scope);
         out.push(...value.pre.map((l) => pad + l));
         out.push(`${pad}a->ret = ${value.code};`);
+        if (this.errHandlers.length > 0) {
+          // Leaving the function must not leave a handler pointing at this frame.
+          out.push(`${pad}hz_err_top = ${this.errHandlers[0]}.prev;`);
+        }
         out.push(`${pad}return a->ret;`);
         return;
       }
@@ -1038,6 +1105,20 @@ class Generator {
         return {
           pre: [...list.pre, ...value.pre],
           code: `hz_list_find_index(${list.code}, ${value.code}, ${this.F}, ${this.line(e.span)})`,
+        };
+      }
+      case "file.read": {
+        const path = this.expr(e.path, scope);
+        return {
+          pre: path.pre,
+          code: `hz_file_read(${path.code}, ${this.F}, ${this.line(e.span)})`,
+        };
+      }
+      case "file.exists": {
+        const path = this.expr(e.path, scope);
+        return {
+          pre: path.pre,
+          code: `hz_file_exists(${path.code}, ${this.F}, ${this.line(e.span)})`,
         };
       }
     }

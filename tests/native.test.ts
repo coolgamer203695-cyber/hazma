@@ -359,6 +359,80 @@ describe("native backend", { skip }, () => {
     assert.match(r.stderr ?? "", /func\.r inside repeat/);
   });
 
+  it("implements file commands and check.error natively", () => {
+    const dir = tempDir().replace(/\\/g, "/") + "/native-files";
+    const r = run(
+      [
+        `folder.create : "${dir}"`,
+        `file.create : "${dir}/a.txt"`,
+        `file.write : "${dir}/a.txt" {`,
+        "    Hello from HAZMA!",
+        "}",
+        `file.add : "${dir}/a.txt" {`,
+        "    Another line!",
+        "}",
+        `save : content = file.read : "${dir}/a.txt"`,
+        "log.out { content }",
+        `log.out { file.exists : "${dir}/a.txt" }`,
+        `save : missing = file.read : "${dir}/missing.txt"`,
+        "check.error {",
+        '    log.out { "caught" }',
+        "}",
+        "func : safe_read {",
+        "    func.p : path",
+        "    save : text = file.read : path",
+        "    check.error {",
+        '        func.r : "fallback"',
+        "    }",
+        "    func.r : text",
+        "}",
+        `log.out { func.c : safe_read { "${dir}/missing.txt" } }`,
+        `folder.delete : "${dir}"`,
+      ].join("\n"),
+      "files.hz",
+    );
+    assert.equal(r.ok, true, r.stderr);
+    assert.deepEqual(r.output, [
+      "Hello from HAZMA!",
+      "Another line!",
+      "",
+      "true",
+      "caught",
+      "fallback",
+    ]);
+  });
+
+  it("check.error catches a runtime error natively", () => {
+    const r = run(
+      [
+        "log.out { 1 / 0 }",
+        "check.error {",
+        '  log.out { "caught div" }',
+        "}",
+        'log.out { "after" }',
+      ].join("\n"),
+      "check-error.hz",
+    );
+    assert.equal(r.ok, true, r.stderr);
+    assert.deepEqual(r.output, ["caught div", "after"]);
+  });
+
+  it("check.error leaves a successful command alone natively", () => {
+    const r = run(
+      [
+        'save : note = "none"',
+        "log.out { 1 }",
+        "check.error {",
+        '  change : note = "ran"',
+        "}",
+        "log.out { note }",
+      ].join("\n"),
+      "check-ok.hz",
+    );
+    assert.equal(r.ok, true, r.stderr);
+    assert.deepEqual(r.output, ["1", "none"]);
+  });
+
   it("compile-only writes an executable and does not run it", () => {
     const out = join(tempDir(), "compiled-only.exe");
     const r = runNative({

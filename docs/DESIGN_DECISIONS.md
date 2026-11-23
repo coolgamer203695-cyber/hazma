@@ -241,6 +241,45 @@ shortest round-trip form, and exponents are normalized (`1e+21`). This
 keeps native `log.out` output byte-identical to the interpreter, which is
 what the example tests assert.
 
+### D34 — `file.write` / `file.add` use a raw text block, not an expression
+
+File contents are not HAZMA values, so parsing them as expressions would
+force quoting and escaping on every line. Instead the lexer switches to a
+raw mode after `file.write : path {` / `file.add : path {` and emits one
+`raw` token. The block ends at the first line that is only `}`, so a `}`
+inside the text is safe as long as it shares the line with other text.
+The token's text is dedented by the common indent and given exactly one
+trailing newline, which makes the common case (write a small config or
+notes file) read like a here-document.
+
+Rejected alternatives: backtick strings (borrowed syntax), a `{{ }}`
+delimiter (collides with block syntax), and requiring one command per line
+(`file.write.line`). The raw block keeps `file.write` a single statement.
+
+### D35 — `check.error` guards the single preceding statement
+
+`check.error { ... }` is written **after** the command it protects, which
+reads as "do this, and if it fails, do that". The parser moves the previous
+statement into the `CheckError` node, so the AST has no new grouping
+syntax and a handler can never drift away from its guard. Semantics:
+
+- the guarded statement runs in a nested frame; a thrown runtime error
+  switches to the handler, a `func.r` or a pause propagates normally;
+- handled errors are silent (they are handled, not logged);
+- errors raised *inside* the handler are not caught again;
+- `check.error` with nothing before it is H2048, and guarding a pause
+  (`repeat.break` etc.) is rejected at compile time with H3066 so the
+  interpreter and the native backend agree; H4098 remains only as an
+  internal backstop.
+
+In the native backend each guard pushes an error handler (`setjmp`) onto a
+runtime stack; `hz_rt_error` longjmps to the top handler. The stack pointer
+is saved and restored with the fiber, and `func.r` restores it before
+returning so a guard cannot leak across frames. A named-repeat body is a
+separate fiber, so a guard outside the loop cannot catch errors raised
+inside it — documented in the spec as a native limit rather than papered
+over.
+
 ---
 
 ## 2. Open questions

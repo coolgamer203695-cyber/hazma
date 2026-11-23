@@ -1,6 +1,6 @@
 # The HAZMA Language Specification
 
-**Version 0.3.0 — Phase 1–8, native backend, Lists included**
+**Version 0.3.0 — Phase 1–8, native backend, Lists, files/folders and `check.error`**
 
 HAZMA is one language intended to eventually replace HTML, CSS and JavaScript
 for building websites and web applications. This document specifies the core
@@ -55,6 +55,11 @@ Notes:
   is the round suffix (error H3034).
 - The `l.*` names are commands; `l.count`, `l.find` and `l.find.index`
   are values and cannot be used as variable names.
+- The file and folder commands (`file.create`, `file.write`, `file.add`,
+  `file.delete`, `file.read`, `file.exists`, `folder.create`,
+  `folder.delete`) and `check.error` are dotted names, so they can never be
+  split by a newline. `file`, `folder` and `check` standing alone are still
+  ordinary names, but `file.create` is always the command.
 
 ### 1.5 Numbers
 
@@ -514,7 +519,8 @@ Loosest to tightest:
 9. primary: number, string, `true`, `false`, `( expr )`, list literal,
    variable/path, `struct.c : name {...}`, `func.c : name {...}`,
    `l.count : list`, `l.find : list { value }`,
-   `l.find.index : list { value }`
+   `l.find.index : list { value }`,
+   `file.read : path`, `file.exists : path`
 
 Type rules:
 
@@ -535,6 +541,94 @@ declarations may appear anywhere at the top level; references to globals
 declared later are allowed (globals are pre-collected). The program runs
 top to bottom; paused repeats are kept alive until the program ends.
 
+### 12.1 Files and folders
+
+Commands (statements):
+
+```
+file.create   : path
+file.write    : path { raw text }
+file.add      : path { raw text }
+file.delete   : path
+folder.create : path
+folder.delete : path
+```
+
+Values (expressions):
+
+```
+file.read   : path      // the whole file as text
+file.exists : path      // true when path is a file
+```
+
+`path` is any expression that produces text; a known non-text value is a
+compile-time error (H3065), and an empty path is a runtime error (H6003).
+Windows paths in a string literal must use `"/"` or an escaped `"\\"`,
+because an unknown escape such as `"\n"` inside `"C:\new"` is H1004.
+
+Rules:
+
+- `file.create` writes an empty file. On an existing file it does nothing and
+  the contents are preserved. A folder at that path is H6006.
+- `file.write` replaces the whole file. `file.add` appends. Both require an
+  existing file (H6001) and neither creates it.
+- `file.delete` removes a single file; missing is H6001, a folder is H6006.
+- `folder.create` creates one folder. An existing folder is a no-op, but
+  **parents are not created**: `folder.create : "a/b/c"` fails with H6002 when
+  `a/b` is missing.
+- `folder.delete` removes the folder, its files and every nested folder.
+- `file.exists` is `true` only for an existing file; a folder or a missing
+  path is `false`. There is no separate folder test yet **[open question]**.
+
+#### Raw text blocks
+
+`file.write` and `file.add` take a **raw text block** instead of a normal
+value:
+
+```
+file.write : "notes.txt" {
+    First line
+        indented line
+    Last line
+}
+```
+
+- The `{` must be on the same line as the command.
+- The block ends at the first line that contains only `}` (optionally
+  indented). Nothing inside is parsed as HAZMA: quotes, `{` and `}` are just
+  text.
+- The common leading indentation of the non-blank lines is removed, so the
+  example above writes `First line\n    indented line\nLast line\n`.
+- Exactly one trailing newline is kept, even when the closing `}` sits on the
+  following line. Interior blank lines are preserved. An empty block writes
+  nothing.
+
+### 12.2 `check.error`
+
+`check.error` guards the **single statement immediately above it**:
+
+```
+save : text = file.read : "settings.txt"
+check.error {
+    log.out { "settings.txt is missing" }
+    change : text = ""
+}
+```
+
+- If the guarded statement raises a runtime error, that error is suppressed
+  and the handler block runs.
+- If the guarded statement succeeds, the handler is skipped.
+- A handled error prints nothing; the program continues normally.
+- The handler sees and may change the surrounding variables.
+- `func.r` works inside both the guarded statement and the handler.
+- `check.error` needs a statement to watch, so it cannot be the first
+  statement of a block or of the program (H2048).
+- Errors raised **inside the handler** are not caught by the same
+  `check.error`; they propagate normally.
+- The guarded statement may not be one that pauses a named repeat
+  (`repeat.break` / `repeat.continue` / `repeat.new`); the compiler rejects
+  that with H3066, so both engines agree.
+
 ---
 
 ## 13. Diagnostics
@@ -548,6 +642,8 @@ Every problem is an `H` code + message + file/line/col span + optional
 | H2xxx   | parser           |
 | H3xxx   | semantic analyzer|
 | H4xxx   | runtime          |
+| H5xxx   | native backend   |
+| H6xxx   | files and folders|
 
 ### 13.1 Lexer (H1xxx)
 
@@ -600,6 +696,7 @@ Every problem is an `H` code + message + file/line/col span + optional
 | H2045 | the reserved word "p" cannot be used as a value |
 | H2046 | expected a value but found ... |
 | H2047 | arguments block for "name" is not closed - missing } |
+| H2048 | check.error has nothing to watch |
 | H2060 | "x" is a value, not a command / "x" is a command, not a value |
 | H2061 | unknown command "l.x" (the list commands are named in the help) |
 | H2062 | the list is not closed - missing } |
@@ -607,6 +704,8 @@ Every problem is an `H` code + message + file/line/col span + optional
 | H2065 | l.change needs at least one index = value line |
 | H2066 | l.find / l.find.index needs a value to search for |
 | H2067 | l.save : needs a list written with { } |
+| H2070 | unknown command "file.x" / "folder.x" (the file and folder commands are named in the help) |
+| H2071 | file.write / file.add needs literal text between { and } |
 
 ### 13.3 Semantic analyzer (H3xxx)
 
@@ -662,6 +761,8 @@ Every problem is an `H` code + message + file/line/col span + optional
 | H3062 | l.add / l.remove / l.change / l.count / l.find needs a list |
 | H3063 | l.change indexes by position - the left side must be a whole number |
 | H3064 | the list "x" holds text, so a number cannot be added |
+| H3065 | file/folder command needs a text path, but this is a number |
+| H3066 | check.error cannot watch a command that pauses a repeat |
 
 ### 13.4 Runtime (H4xxx)
 
@@ -695,7 +796,16 @@ Every problem is an `H` code + message + file/line/col span + optional
 | H4062 | index 5 is out of range - the list has 2 elements |
 | H4063 | "Gun" is not in "weapons", so it cannot be removed |
 | H4064 | l.add / l.remove / l.change / l.count / l.find needs a list |
+| H4098 | check.error cannot watch a command that pauses a repeat (internal backstop; the analyzer reports H3066 first) |
 | H4099 | func.r was used outside a function (internal guard) |
+| H6001 | file.read / file.write / file.add / file.delete / folder.delete cannot find "path" |
+| H6002 | cannot create "path" because its parent folder does not exist |
+| H6003 | file/folder command needs a text path / no permission / not a valid path |
+| H6004 | could not create or write "path" |
+| H6005 | could not delete the folder "path" |
+| H6006 | "path" is a file, not a folder (or the reverse) |
+| H6007 | could not delete "path" |
+| H6008 | could not read "path" |
 
 ### 13.5 Native backend (H5xxx)
 
@@ -714,9 +824,10 @@ These are produced only by the native code generator
 Implemented (phases 1–8, plus the native backend): lexer, parser, AST,
 semantic analysis with a full diagnostic model, tree-walking interpreter
 with the frame-based repeat pause/resume machine, the native List system,
-a C-emitting native backend that produces real executables (MSVC by
-default, `HAZMA_CC` for clang/gcc), CLI (`run`, `build`, `interpret`,
-`check`, `ast`, `new`, `version`, `help`), test suite, examples, docs.
+files and folders, `check.error`, a C-emitting native backend that produces
+real executables (MSVC by default, `HAZMA_CC` for clang/gcc), CLI (`run`,
+`build`, `interpret`, `check`, `ast`, `new`, `version`, `help`), test suite,
+examples, docs.
 
 Still **not built**: a direct LLVM/object-code backend, memory
 reclamation in the native runtime, the web/document layer (elements,
@@ -737,6 +848,10 @@ language server, and the browser runtime.
   `--> file:line`. They do not include the caret excerpt or the `help:`
   line that the analyzer prints at compile time.
 - **`func.r` in named repeats** is H5001 (see above).
+- **`check.error` and paused repeats.** A runtime error raised inside a
+  named-repeat fiber is not caught by a `check.error` that sits outside that
+  loop. Put `check.error` inside the repeat body (around the command that can
+  fail), or run the program with `hazma run --interpret`.
 - **Performance is not claimed.** Generated C plus a dynamic-value
   runtime should be measured against your workload; no comparison with
   C, C++ or Rust is asserted.

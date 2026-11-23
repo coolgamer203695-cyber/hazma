@@ -20,9 +20,17 @@
 #include <string.h>
 #include <stdarg.h>
 #include <math.h>
+#include <setjmp.h>
+#include <errno.h>
+#include <sys/stat.h>
 
 #ifdef _WIN32
 #include <windows.h>
+#include <direct.h>
+#include <io.h>
+#else
+#include <dirent.h>
+#include <unistd.h>
 #endif
 
 #define HZ_NONE   0
@@ -66,6 +74,19 @@ struct HzValue {
   } as;
 };
 
+/* ------------------------------------------------------- error handler stack */
+/*
+ * `check.error` compiles to setjmp here. A runtime error longjmps to the
+ * innermost handler on the current fiber instead of exiting. With no handler
+ * the diagnostic is printed and the program exits, as before.
+ */
+typedef struct HzErrHandler {
+  jmp_buf env;
+  struct HzErrHandler *prev;
+} HzErrHandler;
+
+static HzErrHandler *hz_err_top = NULL;
+
 /* ------------------------------------------------------------------ memory */
 
 static void *hz_alloc(size_t n) {
@@ -81,6 +102,10 @@ static void hz_rt_error(const char *code, const char *file, int line,
                         const char *fmt, ...) {
   va_list ap;
   fflush(stdout);
+  if (hz_err_top != NULL) {
+    /* A check.error block is watching: unwind to it without printing. */
+    longjmp(hz_err_top->env, 1);
+  }
   fprintf(stderr, "runtime error[%s]: ", code);
   va_start(ap, fmt);
   vfprintf(stderr, fmt, ap);
@@ -398,6 +423,259 @@ static int hz_cmp(HzValue a, HzValue b, const char *op, const char *file, int li
   return 0;
 }
 
+/* ------------------------------------------------------------------- files */
+
+static const char *hz_need_text(HzValue v, const char *op, const char *file, int line) {
+  if (v.kind != HZ_STR) {
+    char *s = hz_type_name(v);
+    hz_rt_error("H6003", file, line, "%s needs a text path, but this is %s", op, s);
+  }
+  return v.as.str;
+}
+
+static int hz_path_exists(const char *path) {
+  struct stat st;
+  return stat(path, &st) == 0;
+}
+
+static int hz_path_is_file(const char *path) {
+  struct stat st;
+  if (stat(path, &st) != 0) return 0;
+#ifdef _WIN32
+  return (st.st_mode & _S_IFREG) != 0;
+#else
+  return S_ISREG(st.st_mode);
+#endif
+}
+
+static int hz_path_is_dir(const char *path) {
+  struct stat st;
+  if (stat(path, &st) != 0) return 0;
+#ifdef _WIN32
+  return (st.st_mode & _S_IFDIR) != 0;
+#else
+  return S_ISDIR(st.st_mode);
+#endif
+}
+
+/* Windows antivirus scanners briefly lock a file right after it is written.
+ * Sharing violations surface as a plain failure, so retry for a few hundred
+ * milliseconds before reporting an error. */
+static void hz_sleep_ms(int ms) {
+#ifdef _WIN32
+  Sleep((DWORD)ms);
+#else
+  usleep((useconds_t)(ms * 1000));
+#endif
+}
+
+static FILE *hz_fopen_retry(const char *path, const char *mode) {
+  int attempt;
+  for (attempt = 0; attempt < 8; attempt++) {
+    FILE *f = fopen(path, mode);
+    if (f) return f;
+    if (attempt < 7) hz_sleep_ms(20);
+  }
+  return NULL;
+}
+
+static int hz_remove_retry(const char *path) {
+  int attempt;
+  for (attempt = 0; attempt < 8; attempt++) {
+    if (remove(path) == 0) return 0;
+    if (attempt < 7) hz_sleep_ms(20);
+  }
+  return -1;
+}
+
+static void hz_file_create(HzValue pathv, const char *file, int line) {
+  const char *p = hz_need_text(pathv, "file.create", file, line);
+  FILE *f;
+  if (hz_path_exists(p)) {
+    if (!hz_path_is_file(p)) {
+      hz_rt_error("H6006", file, line, "\"%s\" is a folder, not a file", p);
+    }
+    return; /* creating an existing file does nothing */
+  }
+  errno = 0;
+  f = hz_fopen_retry(p, "wb");
+  if (!f) {
+    if (errno == ENOENT) {
+      hz_rt_error("H6002", file, line,
+                  "cannot create \"%s\" because its parent folder does not exist", p);
+    }
+    hz_rt_error("H6004", file, line, "could not create \"%s\"", p);
+  }
+  fclose(f);
+}
+
+static void hz_file_write(HzValue pathv, HzValue textv, int append,
+                          const char *file, int line) {
+  const char *op = append ? "file.add" : "file.write";
+  const char *p = hz_need_text(pathv, op, file, line);
+  const char *text = hz_need_text(textv, op, file, line);
+  FILE *f;
+  if (!hz_path_exists(p)) {
+    hz_rt_error("H6001", file, line, "%s cannot find \"%s\"", op, p);
+  }
+  if (!hz_path_is_file(p)) {
+    hz_rt_error("H6006", file, line, "\"%s\" is a folder, not a file", p);
+  }
+  f = hz_fopen_retry(p, append ? "ab" : "wb");
+  if (!f) hz_rt_error("H6004", file, line, "could not write \"%s\"", p);
+  fwrite(text, 1, strlen(text), f);
+  fclose(f);
+}
+
+static void hz_file_delete(HzValue pathv, const char *file, int line) {
+  const char *p = hz_need_text(pathv, "file.delete", file, line);
+  if (!hz_path_exists(p)) {
+    hz_rt_error("H6001", file, line, "file.delete cannot find \"%s\"", p);
+  }
+  if (!hz_path_is_file(p)) {
+    hz_rt_error("H6006", file, line, "\"%s\" is a folder, not a file", p);
+  }
+  if (hz_remove_retry(p) != 0) hz_rt_error("H6007", file, line, "could not delete \"%s\"", p);
+}
+
+static HzValue hz_file_read(HzValue pathv, const char *file, int line) {
+  const char *p = hz_need_text(pathv, "file.read", file, line);
+  FILE *f;
+  long size;
+  char *buf;
+  size_t got;
+  if (!hz_path_exists(p)) {
+    hz_rt_error("H6001", file, line, "file.read cannot find \"%s\"", p);
+  }
+  if (!hz_path_is_file(p)) {
+    hz_rt_error("H6006", file, line, "\"%s\" is a folder, not a file", p);
+  }
+  f = hz_fopen_retry(p, "rb");
+  if (!f) hz_rt_error("H6008", file, line, "could not read \"%s\"", p);
+  fseek(f, 0, SEEK_END);
+  size = ftell(f);
+  if (size < 0) {
+    fclose(f);
+    hz_rt_error("H6008", file, line, "could not read \"%s\"", p);
+  }
+  fseek(f, 0, SEEK_SET);
+  buf = (char *)hz_alloc((size_t)size + 1);
+  got = fread(buf, 1, (size_t)size, f);
+  fclose(f);
+  buf[got] = '\0';
+  return hz_str(buf);
+}
+
+static HzValue hz_file_exists(HzValue pathv, const char *file, int line) {
+  const char *p = hz_need_text(pathv, "file.exists", file, line);
+  return hz_bool(hz_path_is_file(p));
+}
+
+static void hz_folder_create(HzValue pathv, const char *file, int line) {
+  const char *p = hz_need_text(pathv, "folder.create", file, line);
+  int rc;
+  int attempt;
+  if (hz_path_exists(p)) {
+    if (!hz_path_is_dir(p)) {
+      hz_rt_error("H6006", file, line, "\"%s\" is a file, not a folder", p);
+    }
+    return;
+  }
+  errno = 0;
+  for (rc = -1, attempt = 0; rc != 0 && attempt < 8; attempt++) {
+    if (attempt > 0) hz_sleep_ms(20);
+#ifdef _WIN32
+    rc = _mkdir(p);
+#else
+    rc = mkdir(p, 0777);
+#endif
+  }
+  if (rc != 0) {
+    if (errno == ENOENT) {
+      hz_rt_error("H6002", file, line,
+                  "cannot create \"%s\" because its parent folder does not exist", p);
+    }
+    hz_rt_error("H6004", file, line, "could not create the folder \"%s\"", p);
+  }
+}
+
+#ifdef _WIN32
+static int hz_delete_file_retry(const char *path) {
+  int attempt;
+  for (attempt = 0; attempt < 8; attempt++) {
+    if (DeleteFileA(path)) return 0;
+    if (attempt < 7) hz_sleep_ms(20);
+  }
+  return -1;
+}
+
+static int hz_remove_dir_retry(const char *path) {
+  int attempt;
+  for (attempt = 0; attempt < 8; attempt++) {
+    if (RemoveDirectoryA(path)) return 0;
+    if (attempt < 7) hz_sleep_ms(20);
+  }
+  return -1;
+}
+
+static void hz_delete_tree(const char *path, const char *file, int line) {
+  char pattern[MAX_PATH];
+  WIN32_FIND_DATAA data;
+  HANDLE h;
+  snprintf(pattern, sizeof(pattern), "%s\\*", path);
+  h = FindFirstFileA(pattern, &data);
+  if (h != INVALID_HANDLE_VALUE) {
+    do {
+      char child[MAX_PATH];
+      if (strcmp(data.cFileName, ".") == 0 || strcmp(data.cFileName, "..") == 0) continue;
+      snprintf(child, sizeof(child), "%s\\%s", path, data.cFileName);
+      if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+        hz_delete_tree(child, file, line);
+      } else if (hz_delete_file_retry(child) != 0) {
+        hz_rt_error("H6005", file, line, "could not delete \"%s\"", child);
+      }
+    } while (FindNextFileA(h, &data));
+    FindClose(h);
+  }
+  if (hz_remove_dir_retry(path) != 0) {
+    hz_rt_error("H6005", file, line, "could not delete the folder \"%s\"", path);
+  }
+}
+#else
+static void hz_delete_tree(const char *path, const char *file, int line) {
+  DIR *d = opendir(path);
+  if (d) {
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+      char child[4096];
+      struct stat st;
+      if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+      snprintf(child, sizeof(child), "%s/%s", path, e->d_name);
+      if (stat(child, &st) == 0 && S_ISDIR(st.st_mode)) {
+        hz_delete_tree(child, file, line);
+      } else if (hz_remove_retry(child) != 0) {
+        hz_rt_error("H6005", file, line, "could not delete \"%s\"", child);
+      }
+    }
+    closedir(d);
+  }
+  if (rmdir(path) != 0) {
+    hz_rt_error("H6005", file, line, "could not delete the folder \"%s\"", path);
+  }
+}
+#endif
+
+static void hz_folder_delete(HzValue pathv, const char *file, int line) {
+  const char *p = hz_need_text(pathv, "folder.delete", file, line);
+  if (!hz_path_exists(p)) {
+    hz_rt_error("H6001", file, line, "folder.delete cannot find \"%s\"", p);
+  }
+  if (!hz_path_is_dir(p)) {
+    hz_rt_error("H6006", file, line, "\"%s\" is a file, not a folder", p);
+  }
+  hz_delete_tree(p, file, line);
+}
+
 /* ------------------------------------------------------------------- lists */
 
 static HzValue hz_list_value(HzList *l) {
@@ -707,6 +985,7 @@ struct HzLoop {
   HzLoop *frozen_by;
   HzBody body;
   void *ctx;
+  HzErrHandler *err_top;
 };
 
 typedef struct HzThread {
@@ -752,6 +1031,7 @@ static void CALLBACK hz_fiber_entry(void *param) {
   HzLoop *loop = (HzLoop *)param;
   hz_thread.fiber = GetCurrentFiber();
   hz_thread.loop = loop;
+  hz_err_top = NULL; /* error handlers belong to the fiber's own C stack */
   loop->body(loop, loop->ctx);
   if (loop->state != HZ_LOOP_FINISHED) hz_loop_finish(loop);
 }
@@ -761,6 +1041,7 @@ static void hz_loop_start(HzLoop *loop, HzBody body, void *ctx, int use_fiber,
                           const char *name, const char *file, int line) {
   HzLoop *caller_loop = hz_thread.loop;
   void *caller_fiber = hz_thread.fiber;
+  HzErrHandler *caller_err = hz_err_top;
 
   loop->name = name;
   loop->state = HZ_LOOP_RUNNING;
@@ -772,6 +1053,7 @@ static void hz_loop_start(HzLoop *loop, HzBody body, void *ctx, int use_fiber,
   loop->paused_loop = NULL;
   loop->body = body;
   loop->ctx = ctx;
+  loop->err_top = NULL;
 
   hz_thread.loop = loop;
 
@@ -781,8 +1063,10 @@ static void hz_loop_start(HzLoop *loop, HzBody body, void *ctx, int use_fiber,
     if (!loop->fiber) {
       hz_rt_error("H5000", file, line, "could not create a fiber for repeat \"%s\"", name);
     }
+    hz_err_top = NULL;
     hz_thread.fiber = loop->fiber;
     hz_switch_to(loop->fiber);
+    hz_err_top = caller_err;
 #else
     hz_rt_error("H5000", file, line,
                 "named repeats need Windows fibers on this target");
@@ -799,6 +1083,7 @@ static void hz_loop_start(HzLoop *loop, HzBody body, void *ctx, int use_fiber,
 static void hz_loop_resume(HzLoop *loop) {
   HzLoop *caller_loop = hz_thread.loop;
   void *caller_fiber = hz_thread.fiber;
+  HzErrHandler *caller_err = hz_err_top;
   HzLoop *inner = loop->paused_loop;
   HzLoop *target_loop = inner ? inner : loop;
   void *target = loop->paused_fiber ? loop->paused_fiber : loop->fiber;
@@ -819,10 +1104,12 @@ static void hz_loop_resume(HzLoop *loop) {
 
   hz_thread.loop = target_loop;
   hz_thread.fiber = target;
+  hz_err_top = loop->err_top;
   hz_switch_to(target);
 
   hz_thread.loop = caller_loop;
   hz_thread.fiber = caller_fiber;
+  hz_err_top = caller_err;
 }
 
 static void hz_loop_enter(HzLoop *loop, HzBody body, void *ctx, int use_fiber,
@@ -921,6 +1208,7 @@ static void hz_loop_pause(HzLoop *loop, const char *file, int line) {
   loop->state = HZ_LOOP_PAUSED;
   loop->paused_fiber = hz_thread.fiber;
   loop->paused_loop = hz_thread.loop;
+  loop->err_top = hz_err_top;
 
   {
     HzLoop *target_loop = loop->parent;
@@ -929,4 +1217,6 @@ static void hz_loop_pause(HzLoop *loop, const char *file, int line) {
     hz_thread.fiber = target;
     hz_switch_to(target);
   }
+  /* Resumed: the loop fiber's own handlers are live again. */
+  hz_err_top = loop->err_top;
 }

@@ -9,6 +9,16 @@
 import { HazmaError, type Span } from "../errors.js";
 import type { Expr, PropAssign, RepeatNamed, Stmt } from "../ast/nodes.js";
 import type { AnalysisResult, FuncIR, StructIR } from "../semantic/analyzer.js";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 
 // ---------------------------------------------------------------------------
 // values
@@ -289,6 +299,119 @@ export class Interpreter {
         break;
       }
 
+      case "check.error": {
+        this.execCheckError(stmt, fr);
+        break;
+      }
+
+      case "file.create": {
+        const p = this.pathArg(stmt.path, fr.scope, "file.create");
+        try {
+          if (existsSync(p)) {
+            if (!statSync(p).isFile()) {
+              throw new HazmaError(
+                "H6006",
+                `"${p}" is a folder, not a file`,
+                stmt.span,
+                "file.create creates files - use folder.create for folders",
+              );
+            }
+            break; // creating an existing file does nothing
+          }
+          this.retryBusy(() => writeFileSync(p, ""));
+        } catch (e) {
+          if (e instanceof HazmaError) throw e;
+          throw this.fsFailure(e, p, stmt.span, "create");
+        }
+        break;
+      }
+
+      case "file.write":
+      case "file.add": {
+        const op = stmt.kind;
+        const p = this.pathArg(stmt.path, fr.scope, op);
+        if (!existsSync(p)) {
+          throw new HazmaError(
+            "H6001",
+            `${op} cannot find "${p}"`,
+            stmt.span,
+            "create the file first with file.create",
+          );
+        }
+        if (!statSync(p).isFile()) {
+          throw new HazmaError("H6006", `"${p}" is a folder, not a file`, stmt.span);
+        }
+        try {
+          if (op === "file.write") this.retryBusy(() => writeFileSync(p, stmt.rawText));
+          else this.retryBusy(() => appendFileSync(p, stmt.rawText));
+        } catch (e) {
+          if (e instanceof HazmaError) throw e;
+          throw this.fsFailure(e, p, stmt.span, op === "file.write" ? "write" : "append");
+        }
+        break;
+      }
+
+      case "file.delete": {
+        const p = this.pathArg(stmt.path, fr.scope, "file.delete");
+        if (!existsSync(p)) {
+          throw new HazmaError("H6001", `file.delete cannot find "${p}"`, stmt.span);
+        }
+        if (!statSync(p).isFile()) {
+          throw new HazmaError(
+            "H6006",
+            `"${p}" is a folder, not a file`,
+            stmt.span,
+            "use folder.delete to remove a folder and everything inside it",
+          );
+        }
+        try {
+          this.retryBusy(() => unlinkSync(p));
+        } catch (e) {
+          if (e instanceof HazmaError) throw e;
+          throw this.fsFailure(e, p, stmt.span, "delete-file");
+        }
+        break;
+      }
+
+      case "folder.create": {
+        const p = this.pathArg(stmt.path, fr.scope, "folder.create");
+        if (existsSync(p)) {
+          if (!statSync(p).isDirectory()) {
+            throw new HazmaError("H6006", `"${p}" is a file, not a folder`, stmt.span);
+          }
+          break; // already exists
+        }
+        try {
+          this.retryBusy(() => mkdirSync(p)); // non-recursive: a missing parent is an error
+        } catch (e) {
+          if (e instanceof HazmaError) throw e;
+          throw this.fsFailure(e, p, stmt.span, "folder-create");
+        }
+        break;
+      }
+
+      case "folder.delete": {
+        const p = this.pathArg(stmt.path, fr.scope, "folder.delete");
+        if (!existsSync(p)) {
+          throw new HazmaError("H6001", `folder.delete cannot find "${p}"`, stmt.span);
+        }
+        if (!statSync(p).isDirectory()) {
+          throw new HazmaError(
+            "H6006",
+            `"${p}" is a file, not a folder`,
+            stmt.span,
+            "use file.delete to remove a single file",
+          );
+        }
+        try {
+          this.retryBusy(() => rmSync(p, { recursive: true }));
+        } catch (e) {
+          if (e instanceof HazmaError) throw e;
+          throw this.fsFailure(e, p, stmt.span, "delete-folder");
+        }
+        break;
+      }
+
       case "log": {
         this.out(format(this.eval(stmt.expr, fr.scope, stmt.span)));
         break;
@@ -480,6 +603,121 @@ export class Interpreter {
 
       case "func.p":
         break; // consumed by the parser into parameters
+    }
+  }
+
+  /**
+   * Runs the guarded statement in a nested frame. A thrown runtime error makes
+   * the handler run; a return or a pause is control flow, not a failure.
+   */
+  private execCheckError(stmt: Extract<Stmt, { kind: "check.error" }>, fr: Frame): void {
+    const depth = this.frames.length;
+    this.frames.push({
+      stmts: [stmt.protectedStmt],
+      ip: 0,
+      kind: "block",
+      scope: fr.scope,
+      owner: fr.owner,
+    });
+    let failure: unknown = null;
+    try {
+      this.runUntil(depth);
+    } catch (e) {
+      if (e instanceof ReturnSignal) {
+        this.frames.length = Math.min(this.frames.length, depth);
+        throw e;
+      }
+      if (e instanceof PauseHandled) {
+        // Backstop only: the analyzer rejects a pause command directly under
+        // check.error with H3066, so a pause should never reach this point.
+        this.frames.length = Math.min(this.frames.length, depth);
+        throw new HazmaError(
+          "H4098",
+          "check.error cannot watch a command that pauses a repeat",
+          stmt.protectedStmt.span,
+          "move repeat.break : outside the command guarded by check.error",
+        );
+      }
+      failure = e;
+      this.frames.length = Math.min(this.frames.length, depth);
+    }
+    if (failure !== null) {
+      const handlerDepth = this.frames.length;
+      this.frames.push({
+        stmts: stmt.handler,
+        ip: 0,
+        kind: "block",
+        scope: fr.scope,
+        owner: fr.owner,
+      });
+      this.runUntil(handlerDepth);
+    }
+  }
+
+  /** Evaluates a file/folder path and requires it to be non-empty text. */
+  private pathArg(expr: Expr, scope: Scope, op: string): string {
+    const v = this.eval(expr, scope, expr.span);
+    if (typeof v !== "string") {
+      throw new HazmaError(
+        "H6003",
+        `${op} needs a text path, but this is ${fmtType(v)}`,
+        expr.span,
+      );
+    }
+    if (v.length === 0) {
+      throw new HazmaError("H6003", `${op} needs a non-empty path`, expr.span);
+    }
+    return v;
+  }
+
+  /** Windows antivirus scanners briefly lock a file right after it is written.
+   *  EBUSY/EAGAIN here are transient sharing violations, so retry briefly. */
+  private retryBusy<T>(op: () => T): T {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return op();
+      } catch (e) {
+        const code = (e as { code?: string } | null)?.code;
+        if ((code !== "EBUSY" && code !== "EAGAIN") || attempt >= 6) throw e;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+      }
+    }
+  }
+
+  /** Maps a Node filesystem error onto a stable HAZMA diagnostic. */
+  private fsFailure(
+    e: unknown,
+    path: string,
+    span: Span | undefined,
+    action: "create" | "write" | "append" | "read" | "delete-file" | "delete-folder" | "folder-create",
+  ): HazmaError {
+    const code = (e as { code?: string } | null)?.code;
+    if (code === "ENOENT") {
+      if (action === "create" || action === "folder-create") {
+        return new HazmaError(
+          "H6002",
+          `cannot create "${path}" because its parent folder does not exist`,
+          span,
+          "create the parent folder first with folder.create",
+        );
+      }
+      return new HazmaError("H6001", `"${path}" does not exist`, span);
+    }
+    if (code === "EACCES" || code === "EPERM") {
+      return new HazmaError("H6003", `no permission to access "${path}"`, span);
+    }
+    if (code === "EINVAL" || code === "ENAMETOOLONG" || code === "ENOTDIR") {
+      return new HazmaError("H6003", `"${path}" is not a valid path`, span);
+    }
+    switch (action) {
+      case "read":
+        return new HazmaError("H6008", `could not read "${path}"`, span);
+      case "delete-file":
+        return new HazmaError("H6007", `could not delete "${path}"`, span);
+      case "delete-folder":
+        return new HazmaError("H6005", `could not delete the folder "${path}"`, span);
+      default:
+        return new HazmaError("H6004", `could not write "${path}"`, span);
     }
   }
 
@@ -885,6 +1123,35 @@ export class Interpreter {
         const value = this.eval(expr.value, scope, expr.value.span);
         const at = list.items.findIndex((item) => valueEquals(item, value));
         return at === -1 ? 0 : at + 1;
+      }
+
+      case "file.read": {
+        const p = this.pathArg(expr.path, scope, "file.read");
+        if (!existsSync(p)) {
+          throw new HazmaError(
+            "H6001",
+            `file.read cannot find "${p}"`,
+            expr.span,
+            "check the path with file.exists first, or wrap this in check.error",
+          );
+        }
+        if (!statSync(p).isFile()) {
+          throw new HazmaError("H6006", `"${p}" is a folder, not a file`, expr.span);
+        }
+        try {
+          return this.retryBusy(() => readFileSync(p, "utf8"));
+        } catch (e) {
+          throw this.fsFailure(e, p, expr.span, "read");
+        }
+      }
+
+      case "file.exists": {
+        const p = this.pathArg(expr.path, scope, "file.exists");
+        try {
+          return existsSync(p) && statSync(p).isFile();
+        } catch {
+          return false;
+        }
       }
     }
   }

@@ -11,6 +11,32 @@ const isIdentStart = (c: string) =>
   (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_";
 const isIdentChar = (c: string) => isIdentStart(c) || isDigit(c);
 
+/**
+ * Turns the literal text between a `file.write`/`file.add` opening `{` and the
+ * closing `}` line into the bytes written to disk.
+ *
+ * The rules (see DESIGN_DECISIONS D34): one leading and one trailing blank line
+ * are dropped, the common indentation of the non-blank lines is removed, and
+ * the result ends with exactly one newline. An empty block yields "".
+ */
+export function dedentRawBlock(text: string): string {
+  const lines = text.split("\n").map((l) => (l.endsWith("\r") ? l.slice(0, -1) : l));
+  if (lines.length > 0 && lines[0].trim() === "") lines.shift();
+  if (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+
+  let indent = Infinity;
+  for (const l of lines) {
+    if (l.trim() === "") continue;
+    const lead = /^[ \t]*/.exec(l)?.[0].length ?? 0;
+    if (lead < indent) indent = lead;
+  }
+  if (!Number.isFinite(indent)) indent = 0;
+
+  const out = lines.map((l) => (l.trim() === "" ? "" : l.slice(indent)));
+  if (out.length === 0) return "";
+  return out.join("\n") + "\n";
+}
+
 export function tokenize(source: string): Token[] {
   // A UTF-8 BOM is common from Windows editors; it is not part of the source.
   if (source.charCodeAt(0) === 0xfeff) source = source.slice(1);
@@ -19,6 +45,9 @@ export function tokenize(source: string): Token[] {
   let i = 0;
   let line = 1;
   let col = 1;
+  // Set when the last identifier was file.write / file.add; the next `{` on the
+  // same line opens a raw text block instead of normal tokens.
+  let rawMode: "file.write" | "file.add" | null = null;
 
   const err = (code: string, msg: string, eline = line, ecol = col, help?: string): never => {
     throw new HazmaError(
@@ -47,6 +76,7 @@ export function tokenize(source: string): Token[] {
       i++;
       line++;
       col = 1;
+      rawMode = null;
       continue;
     }
 
@@ -137,6 +167,7 @@ export function tokenize(source: string): Token[] {
       push("ident", text, sl, sc);
       col += j - i;
       i = j;
+      if (text === "file.write" || text === "file.add") rawMode = text;
       continue;
     }
 
@@ -153,6 +184,62 @@ export function tokenize(source: string): Token[] {
       push("punct", ".r", sl, sc);
       i += 2;
       col += 2;
+      continue;
+    }
+
+    // Raw text block for file.write / file.add: `{` opens literal text that
+    // runs until a line containing only `}`. Handled here because the text is
+    // not tokenized (it may contain spaces, quotes, punctuation, anything).
+    if (c === "{" && rawMode !== null) {
+      push("punct", "{", sl, sc);
+      i++;
+      col++;
+      const contentStart = i;
+      const rawSL = line;
+      const rawSC = col;
+
+      // Locate the start of the line whose only non-space character is `}`.
+      let j = i;
+      let termStart = -1;
+      while (j <= source.length) {
+        let k = j;
+        while (k < source.length && (source[k] === " " || source[k] === "\t" || source[k] === "\r")) k++;
+        if (k < source.length && source[k] === "}") {
+          let m = k + 1;
+          while (m < source.length && (source[m] === " " || source[m] === "\t" || source[m] === "\r")) m++;
+          if (m >= source.length || source[m] === "\n") {
+            termStart = j;
+            break;
+          }
+        }
+        while (j < source.length && source[j] !== "\n") j++;
+        if (j >= source.length) break;
+        j++;
+      }
+
+      if (termStart < 0) {
+        err(
+          "H2040",
+          "raw text block is not closed - missing a line with only }",
+          sl,
+          sc,
+          "end the block with a line containing only }",
+        );
+      }
+
+      const rawText = dedentRawBlock(source.slice(contentStart, termStart));
+      // Advance line/col across the captured text; termStart begins a line.
+      for (let p = contentStart; p < termStart; p++) {
+        if (source[p] === "\n") {
+          line++;
+          col = 1;
+        } else {
+          col++;
+        }
+      }
+      push("raw", rawText, rawSL, rawSC, rawText);
+      i = termStart;
+      rawMode = null;
       continue;
     }
 

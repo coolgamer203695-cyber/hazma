@@ -1,6 +1,6 @@
 // HAZMA - token definitions.
 
-export type TokKind = "number" | "string" | "ident" | "punct" | "newline" | "eof";
+export type TokKind = "number" | "string" | "ident" | "punct" | "newline" | "raw" | "eof";
 
 export interface Token {
   kind: TokKind;

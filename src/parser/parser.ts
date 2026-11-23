@@ -7,6 +7,7 @@ import { HazmaError, type Span } from "../errors.js";
 import type {
   BinaryOp,
   CallArg,
+  CheckError,
   Expr,
   FuncCall,
   If,
@@ -189,7 +190,7 @@ export class Parser {
     const stmts: Stmt[] = [];
     this.skipNewlines();
     while (!this.check("eof")) {
-      stmts.push(this.parseStatement());
+      this.parseMember(stmts);
       const end = this.endStatement("a command");
       if (end === "close") {
         throw new HazmaError(
@@ -202,6 +203,37 @@ export class Parser {
       this.skipNewlines();
     }
     return stmts;
+  }
+
+  /**
+   * Parses one statement into `stmts`. `check.error` is special: it takes the
+   * statement that was just pushed and wraps it, so the guarded command and its
+   * handler stay together as one AST node.
+   */
+  private parseMember(stmts: Stmt[]): void {
+    if (this.check("ident", "check.error")) {
+      stmts.push(this.parseCheckError(stmts));
+      return;
+    }
+    stmts.push(this.parseStatement());
+  }
+
+  private parseCheckError(stmts: Stmt[]): CheckError {
+    const start = this.i;
+    const t = this.next(); // check.error
+    if (stmts.length === 0) {
+      throw new HazmaError(
+        "H2048",
+        "check.error has nothing to watch",
+        spanTok(t),
+        "put the command that may fail directly above check.error { ... }",
+      );
+    }
+    const protectedStmt = stmts.pop()!;
+    this.expectPunct("{", "to open the check.error block");
+    const handler: Stmt[] = [];
+    this.parseBlockCore(handler);
+    return { kind: "check.error", protectedStmt, handler, span: this.spanFrom(start) };
   }
 
   parseStatement(): Stmt {
@@ -326,6 +358,63 @@ export class Parser {
         `unknown command "${t.text}"`,
         spanTok(t),
         "the list commands are l.save, l.add, l.remove and l.change",
+      );
+    }
+
+    // ------------------------------------------------------------ files/folders
+    // file.create : path   |   file.delete : path
+    if (t.text === "file.create" || t.text === "file.delete") {
+      this.next();
+      this.expectColon(t.text);
+      const path = this.parseExpression();
+      if (t.text === "file.create") {
+        return { kind: "file.create", path, span: this.spanFrom(start) };
+      }
+      return { kind: "file.delete", path, span: this.spanFrom(start) };
+    }
+
+    // file.write : path { raw text }   |   file.add : path { raw text }
+    if (t.text === "file.write" || t.text === "file.add") {
+      this.next();
+      this.expectColon(t.text);
+      const path = this.parseExpression();
+      this.expectPunct("{", `to open the ${t.text} block`);
+      const raw = this.peek();
+      if (raw.kind !== "raw") {
+        throw new HazmaError(
+          "H2071",
+          `${t.text} needs literal text between { and }`,
+          spanTok(raw),
+          "write the text on its own lines and end the block with a line containing only }",
+        );
+      }
+      this.next();
+      this.expectPunct("}", `to close the ${t.text} block`);
+      const rawText = String(raw.value ?? "");
+      if (t.text === "file.write") {
+        return { kind: "file.write", path, rawText, span: this.spanFrom(start) };
+      }
+      return { kind: "file.add", path, rawText, span: this.spanFrom(start) };
+    }
+
+    // folder.create : path   |   folder.delete : path
+    if (t.text === "folder.create" || t.text === "folder.delete") {
+      this.next();
+      this.expectColon(t.text);
+      const path = this.parseExpression();
+      if (t.text === "folder.create") {
+        return { kind: "folder.create", path, span: this.spanFrom(start) };
+      }
+      return { kind: "folder.delete", path, span: this.spanFrom(start) };
+    }
+
+    if (parts[0] === "file" || parts[0] === "folder") {
+      throw new HazmaError(
+        "H2070",
+        `unknown command "${t.text}"`,
+        spanTok(t),
+        "the file commands are file.create, file.write, file.add, file.delete and file.exists; " +
+          "the folder commands are folder.create and folder.delete",
       );
     }
 
@@ -712,8 +801,7 @@ export class Parser {
           "close the block with }",
         );
       }
-      const stmt = this.parseStatement();
-      stmts.push(stmt);
+      this.parseMember(stmts);
       const end = this.endStatement("a command");
       if (end === "close") {
         this.next();
@@ -1056,6 +1144,18 @@ export class Parser {
         this.next();
         const call = this.parseFuncCall();
         return call;
+      }
+
+      // file.read : path   /   file.exists : path
+      if (t.text === "file.read" || t.text === "file.exists") {
+        const isRead = t.text === "file.read";
+        const name = t.text;
+        this.next();
+        this.expectColon(name);
+        const path = this.parsePostfix();
+        return isRead
+          ? { kind: "file.read", path, span: this.spanFrom(start) }
+          : { kind: "file.exists", path, span: this.spanFrom(start) };
       }
 
       // statement-only list commands cannot be used as values

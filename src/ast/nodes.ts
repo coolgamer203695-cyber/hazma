@@ -26,7 +26,9 @@ export type Expr =
   | ListIndex
   | ListCount
   | ListFind
-  | ListFindIndex;
+  | ListFindIndex
+  | FileRead
+  | FileExists;
 
 export interface NumberLit extends BaseNode {
   kind: "number";
@@ -139,6 +141,18 @@ export interface ListFindIndex extends BaseNode {
   value: Expr;
 }
 
+/** `file.read : "data.txt"` - the whole file as text. */
+export interface FileRead extends BaseNode {
+  kind: "file.read";
+  path: Expr;
+}
+
+/** `file.exists : "data.txt"` - true when the path names a file. */
+export interface FileExists extends BaseNode {
+  kind: "file.exists";
+  path: Expr;
+}
+
 // ---------------------------------------------------------------------------
 // Statements
 // ---------------------------------------------------------------------------
@@ -165,7 +179,14 @@ export type Stmt =
   | ListSave
   | ListAdd
   | ListRemove
-  | ListChange;
+  | ListChange
+  | CheckError
+  | FileCreate
+  | FileWrite
+  | FileAdd
+  | FileDelete
+  | FolderCreate
+  | FolderDelete;
 
 export interface FuncParamStmt extends BaseNode {
   kind: "func.p";
@@ -357,6 +378,58 @@ export interface ListChange extends BaseNode {
   changes: ListChangeEntry[];
 }
 
+/**
+ * `check.error { ... }` - runs the handler only when the immediately preceding
+ * statement failed. The parser moves that preceding statement into
+ * `protectedStmt`, so the pair travels together through every phase.
+ */
+export interface CheckError extends BaseNode {
+  kind: "check.error";
+  protectedStmt: Stmt;
+  handler: Stmt[];
+}
+
+/** `file.create : "data.txt"` - creates an empty file; existing files are kept. */
+export interface FileCreate extends BaseNode {
+  kind: "file.create";
+  path: Expr;
+}
+
+/**
+ * `file.write : "data.txt" { ... }` - replaces the file's contents.
+ * `rawText` is the literal text of the block, already dedented.
+ */
+export interface FileWrite extends BaseNode {
+  kind: "file.write";
+  path: Expr;
+  rawText: string;
+}
+
+/** `file.add : "data.txt" { ... }` - appends the block's text to the file. */
+export interface FileAdd extends BaseNode {
+  kind: "file.add";
+  path: Expr;
+  rawText: string;
+}
+
+/** `file.delete : "data.txt"` */
+export interface FileDelete extends BaseNode {
+  kind: "file.delete";
+  path: Expr;
+}
+
+/** `folder.create : "logs"` - creates one folder; parents must already exist. */
+export interface FolderCreate extends BaseNode {
+  kind: "folder.create";
+  path: Expr;
+}
+
+/** `folder.delete : "logs"` - removes the folder and everything inside it. */
+export interface FolderDelete extends BaseNode {
+  kind: "folder.delete";
+  path: Expr;
+}
+
 export interface Program {
   stmts: Stmt[];
 }
@@ -383,5 +456,7 @@ export function describeExpr(e: Expr): string {
     case "list.count": return "the number of elements";
     case "list.find": return "true or false from l.find";
     case "list.find.index": return "an index from l.find.index";
+    case "file.read": return "the contents of a file";
+    case "file.exists": return "true or false from file.exists";
   }
 }
