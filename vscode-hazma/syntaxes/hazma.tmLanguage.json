@@ -22,10 +22,19 @@
       "include": "#commands"
     },
     {
+      "include": "#math-commands"
+    },
+    {
       "include": "#stray-is"
     },
     {
       "include": "#round"
+    },
+    {
+      "include": "#math-postfix"
+    },
+    {
+      "include": "#math-constants"
     },
     {
       "include": "#operators"
@@ -118,6 +127,30 @@
         {
           "name": "keyword.operator.round.hazma",
           "match": "(?<=[\\w\\)])\\.r\\b"
+        }
+      ]
+    },
+    "math-commands": {
+      "patterns": [
+        {
+          "name": "keyword.control.math.hazma",
+          "match": "\\bmath\\.(?:min|max|random|sin|cos|tan|clamp)\\b"
+        }
+      ]
+    },
+    "math-postfix": {
+      "patterns": [
+        {
+          "name": "keyword.operator.math.hazma",
+          "match": "(?<=[\\w\\)])\\.(?:abs|sqrt|floor|ceil|round|pow)\\b"
+        }
+      ]
+    },
+    "math-constants": {
+      "patterns": [
+        {
+          "name": "constant.language.math.hazma",
+          "match": "\\bmath\\.(?:pi|e)\\b"
         }
       ]
     },
