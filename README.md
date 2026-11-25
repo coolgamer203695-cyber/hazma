@@ -44,7 +44,8 @@ HAZMA source  ->  lexer  ->  parser  ->  analyzer (typed IR)
   it with the host toolchain and executes the resulting binary.
   `hazma run app.hz --interpret` keeps the tree-walking interpreter for
   debugging and for the one construct the native backend still rejects.
-- **Commands**: `hazma run app.hz`, `hazma build app.hz -o app.exe`,
+- **Commands**: `hazma app.hz` (shortcut for `hazma run app.hz`), `hazma run app.hz`,
+  `hazma build app.hz` (writes app.exe next to the source; use `-o` to choose a name),
   `hazma run app.hz --emit-c` (print generated C), `hazma run app.hz
   --keep` (keep temporary C files), `hazma run app.hz -o app.exe`
   (compile only). The generated program begins with
@@ -147,7 +148,7 @@ HAZMA source  ->  lexer  ->  parser  ->  analyzer (typed IR)
   `-o`, and `--interpret`, backed by a C runtime that implements values,
   strings, lists, structures, arithmetic, diagnostics and the named-repeat
   pause/resume machine. See [Native compilation](#native-compilation).
-- **CLI** — `hazma run | build | interpret | check | ast | new | version | help`.
+- **CLI** — `hazma app.hz` (runs by default), `hazma run | build | interpret | check | ast | new | version | help`.
 - **Docs** — language spec, design decisions (locked + open questions),
   compiler architecture: see [`docs/`](docs/).
 - **Examples** — `examples/01_hello.hz` through `examples/07_lists.hz`,
