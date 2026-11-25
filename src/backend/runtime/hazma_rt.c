@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <math.h>
+#include <time.h>
 #include <setjmp.h>
 #include <errno.h>
 #include <sys/stat.h>
@@ -397,6 +398,94 @@ static HzValue hz_round(HzValue a, const char *file, int line) {
     hz_rt_error("H4027", file, line, "price.r rounds numbers, but this is %s", s);
   }
   return hz_num(floor(a.as.num + 0.5));
+}
+
+/* ------------------------------------------------------------------- math */
+
+static double hz_math_num(HzValue v, const char *op, const char *file, int line) {
+  if (v.kind != HZ_NUM) {
+    char *s = hz_type_name(v);
+    hz_rt_error("H4065", file, line, "%s works on numbers, but this is %s", op, s);
+  }
+  return v.as.num;
+}
+
+static HzValue hz_math_abs(HzValue a, const char *file, int line) {
+  return hz_num(fabs(hz_math_num(a, ".abs", file, line)));
+}
+
+static HzValue hz_math_sqrt(HzValue a, const char *file, int line) {
+  return hz_num(sqrt(hz_math_num(a, ".sqrt", file, line)));
+}
+
+static HzValue hz_math_floor(HzValue a, const char *file, int line) {
+  return hz_num(floor(hz_math_num(a, ".floor", file, line)));
+}
+
+static HzValue hz_math_ceil(HzValue a, const char *file, int line) {
+  return hz_num(ceil(hz_math_num(a, ".ceil", file, line)));
+}
+
+static HzValue hz_math_round(HzValue a, const char *file, int line) {
+  return hz_num(floor(hz_math_num(a, ".round", file, line) + 0.5));
+}
+
+static HzValue hz_math_pow(HzValue a, HzValue b, const char *file, int line) {
+  double base = hz_math_num(a, ".pow", file, line);
+  double exp = hz_math_num(b, ".pow", file, line);
+  return hz_num(pow(base, exp));
+}
+
+static HzValue hz_math_min(HzValue a, HzValue b, const char *file, int line) {
+  double x = hz_math_num(a, "math.min", file, line);
+  double y = hz_math_num(b, "math.min", file, line);
+  return hz_num(x < y ? x : y);
+}
+
+static HzValue hz_math_max(HzValue a, HzValue b, const char *file, int line) {
+  double x = hz_math_num(a, "math.max", file, line);
+  double y = hz_math_num(b, "math.max", file, line);
+  return hz_num(x > y ? x : y);
+}
+
+static HzValue hz_math_clamp(HzValue v, HzValue lo, HzValue hi, const char *file, int line) {
+  double x = hz_math_num(v, "math.clamp", file, line);
+  double l = hz_math_num(lo, "math.clamp", file, line);
+  double h = hz_math_num(hi, "math.clamp", file, line);
+  if (x < l) return hz_num(l);
+  if (x > h) return hz_num(h);
+  return hz_num(x);
+}
+
+static HzValue hz_math_sin(HzValue a, const char *file, int line) {
+  return hz_num(sin(hz_math_num(a, "math.sin", file, line) * 3.14159265358979323846 / 180.0));
+}
+
+static HzValue hz_math_cos(HzValue a, const char *file, int line) {
+  return hz_num(cos(hz_math_num(a, "math.cos", file, line) * 3.14159265358979323846 / 180.0));
+}
+
+static HzValue hz_math_tan(HzValue a, const char *file, int line) {
+  return hz_num(tan(hz_math_num(a, "math.tan", file, line) * 3.14159265358979323846 / 180.0));
+}
+
+static HzValue hz_math_random(HzValue a, HzValue b, const char *file, int line) {
+  double lo = hz_math_num(a, "math.random", file, line);
+  double hi = hz_math_num(b, "math.random", file, line);
+  if (lo > hi) {
+    hz_rt_error("H4066", file, line,
+      "math.random needs the first number to be no larger than the second, but got %g and %g", lo, hi);
+  }
+  long lo_i = (long)ceil(lo);
+  long hi_i = (long)floor(hi);
+  if (lo_i > hi_i) return hz_num((double)lo_i);
+  static int seeded = 0;
+  if (!seeded) {
+    seeded = 1;
+    srand((unsigned)time(NULL));
+  }
+  long span = hi_i - lo_i + 1;
+  return hz_num((double)(lo_i + (long)(rand() % span)));
 }
 
 static int hz_truth(HzValue v, const char *what, const char *file, int line) {

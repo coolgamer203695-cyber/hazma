@@ -17,6 +17,9 @@ export type Expr =
   | BoolLit
   | Path
   | Round
+  | MathPostfix
+  | MathCall
+  | MathProp
   | UnaryNeg
   | Binary
   | Not
@@ -151,6 +154,28 @@ export interface FileRead extends BaseNode {
 export interface FileExists extends BaseNode {
   kind: "file.exists";
   path: Expr;
+}
+
+/** Postfix math on a number: `25.sqrt`, `-15.abs`, `2.pow(3)`, `x.floor`. */
+export interface MathPostfix extends BaseNode {
+  kind: "math.postfix";
+  op: "abs" | "sqrt" | "floor" | "ceil" | "round" | "pow";
+  inner: Expr;
+  /** Only `pow` carries arguments; every other op has none. */
+  args: Expr[];
+}
+
+/** `math.min(3, 5)`, `math.clamp(x, 0, 100)`, `math.random(1, 6)`. */
+export interface MathCall extends BaseNode {
+  kind: "math.call";
+  fn: "min" | "max" | "random" | "sin" | "cos" | "tan" | "clamp";
+  args: Expr[];
+}
+
+/** `math.pi`, `math.e`. */
+export interface MathProp extends BaseNode {
+  kind: "math.prop";
+  name: "pi" | "e";
 }
 
 // ---------------------------------------------------------------------------
@@ -458,5 +483,8 @@ export function describeExpr(e: Expr): string {
     case "list.find.index": return "an index from l.find.index";
     case "file.read": return "the contents of a file";
     case "file.exists": return "true or false from file.exists";
+    case "math.postfix": return `a number from ${e.op}${e.args.length ? `(${e.args.length} arg)` : ""}`;
+    case "math.call": return `the result of math.${e.fn}`;
+    case "math.prop": return `the constant ${e.name}`;
   }
 }

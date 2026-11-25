@@ -280,6 +280,34 @@ separate fiber, so a guard outside the loop cannot catch errors raised
 inside it — documented in the spec as a native limit rather than papered
 over.
 
+### D36 — Postfix math binds tighter than unary minus; `math.*` are primaries
+
+Math postfix operators (`.abs`, `.sqrt`, `.floor`, `.ceil`, `.round`,
+`.pow(...)`) bind tighter than unary minus, so `-15.abs` is `abs(-15)` =
+15 and `-2.pow(2)` is `(-2)^2` = 4. The lexer turns `.name` directly after
+a value (number, `)`, `]`, `}`) into a single postfix token, and the parser
+parses unary minus before the postfix chain so the minus reaches the
+underlying value.
+
+The `math.*` helpers (`math.min`, `math.max`, `math.random`, `math.sin`,
+`math.cos`, `math.tan`, `math.clamp`) and the constants `math.pi` /
+`math.e` are parsed as ordinary primary expressions inside `parsePrimary`,
+exactly like `func.c : name {...}` or `file.read : path`. They take
+parenthesised arguments — `math.clamp(x, 0, 100)` — unlike ordinary
+functions which keep `func.c : name { ... }`. Trig is in degrees.
+
+Rejected alternatives: `math.min 3 5` (inconsistent with the rest of the
+language), `2 ^ 3` (the `^` character is not an operator), and binding
+unary minus looser than postfix (which would make `-15.abs` = -15, not
+15).
+
+In the native backend each postfix op and helper is a small C function in
+`hazma_rt.c` (`hz_math_abs`, `hz_math_sin`, ...) that calls `hz_math_num`
+to demand a number operand and reports H4065 otherwise; `math.random`
+reports H4066 when `a > b`. The analyzer rejects wrong operand types with
+H3067 and wrong argument counts with H3046, so a program that typechecks
+never hits those runtime paths except through function returns.
+
 ---
 
 ## 2. Open questions

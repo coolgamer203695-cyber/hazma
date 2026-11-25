@@ -514,13 +514,39 @@ Loosest to tightest:
 4. comparisons `==` `!=` `>` `<` `>=` `<=` (non-associative chains allowed left-to-right)
 5. `+` `-`
 6. `*` `/`
-7. unary `-`
-8. postfix `.r` and `[ index ]`
+7. unary `-` — binds tighter than postfix: `-15.abs` means `abs(-15)` = 15, and `-x.pow(2)` means `(-x)^2`
+8. postfix `.r`, `[ index ]`, `.abs`, `.sqrt`, `.floor`, `.ceil`, `.round`, `.pow(...)`
 9. primary: number, string, `true`, `false`, `( expr )`, list literal,
    variable/path, `struct.c : name {...}`, `func.c : name {...}`,
    `l.count : list`, `l.find : list { value }`,
    `l.find.index : list { value }`,
-   `file.read : path`, `file.exists : path`
+   `file.read : path`, `file.exists : path`,
+   `math.pi`, `math.e`, `math.min(...)`, `math.max(...)`,
+   `math.random(...)`, `math.sin(...)`, `math.cos(...)`, `math.tan(...)`,
+   `math.clamp(...)`
+
+Math helpers (`math.min`, `math.max`, `math.random`, `math.sin`, `math.cos`,
+`math.tan`, `math.clamp`) and the constants `math.pi` / `math.e` are ordinary
+primary expressions: they are used exactly like a function call or a number,
+not inside `{ ... }`.
+
+Math postfix operators and helpers:
+
+- `value.abs` — absolute value
+- `value.sqrt` — square root
+- `value.floor` — round toward negative infinity
+- `value.ceil` — round toward positive infinity
+- `value.round` — round to nearest whole number (halves away from zero)
+- `value.pow( n )` — raise `value` to the power `n`
+- `math.min( a, b, ... )` — smallest of two or more numbers
+- `math.max( a, b, ... )` — largest of two or more numbers
+- `math.random( a, b )` — whole number in `a..b` inclusive (requires `a <= b`)
+- `math.sin( deg )` / `math.cos( deg )` / `math.tan( deg )` — degrees, not radians
+- `math.clamp( v, lo, hi )` — clamp `v` into `lo..hi`
+- `math.pi`, `math.e` — constants
+
+All math takes numbers only; anything else is a compile-time error (H3009) or a
+runtime error (H4065) when the type cannot be known until the program runs.
 
 Type rules:
 
@@ -763,6 +789,7 @@ Every problem is an `H` code + message + file/line/col span + optional
 | H3064 | the list "x" holds text, so a number cannot be added |
 | H3065 | file/folder command needs a text path, but this is a number |
 | H3066 | check.error cannot watch a command that pauses a repeat |
+| H3067 | math works on numbers, but the value is a string, boolean or list |
 
 ### 13.4 Runtime (H4xxx)
 
@@ -796,6 +823,8 @@ Every problem is an `H` code + message + file/line/col span + optional
 | H4062 | index 5 is out of range - the list has 2 elements |
 | H4063 | "Gun" is not in "weapons", so it cannot be removed |
 | H4064 | l.add / l.remove / l.change / l.count / l.find needs a list |
+| H4065 | math works on numbers, but this is a string, boolean or list (runtime) |
+| H4066 | math.random needs the first number no larger than the second |
 | H4098 | check.error cannot watch a command that pauses a repeat (internal backstop; the analyzer reports H3066 first) |
 | H4099 | func.r was used outside a function (internal guard) |
 | H6001 | file.read / file.write / file.add / file.delete / folder.delete cannot find "path" |

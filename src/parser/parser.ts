@@ -20,6 +20,17 @@ import type {
 import type { Token } from "../lexer/tokens.js";
 import { RESERVED_WORDS } from "../lexer/tokens.js";
 
+/** Postfix math operators that bind tighter than unary minus. */
+const MATH_POSTFIX_OPS = new Set(["abs", "sqrt", "floor", "ceil", "round", "pow"]);
+type MathPostfixOp = "abs" | "sqrt" | "floor" | "ceil" | "round" | "pow";
+
+/** Zero-argument math constants. */
+const MATH_PROPS = new Set(["pi", "e"]);
+
+/** Multi-argument math helpers. */
+const MATH_CALLS = new Set(["min", "max", "random", "sin", "cos", "tan", "clamp"]);
+type MathCallFn = "min" | "max" | "random" | "sin" | "cos" | "tan" | "clamp";
+
 export class Parser {
   private toks: Token[];
   private i = 0;
@@ -84,6 +95,24 @@ export class Parser {
 
   private expectColon(cmd: string): void {
     this.expectPunct(":", `after "${cmd}"`);
+  }
+
+  /** Comma-separated expressions in parentheses, as used by math helpers. */
+  private parseParenArgs(what: string): Expr[] {
+    this.expectPunct("(", `to open the arguments of ${what}`);
+    const args: Expr[] = [];
+    this.skipNewlines();
+    if (!this.check("punct", ")")) {
+      args.push(this.parseExpression());
+      while (this.check("punct", ",")) {
+        this.next();
+        this.skipNewlines();
+        args.push(this.parseExpression());
+      }
+    }
+    this.skipNewlines();
+    this.expectPunct(")", `to close the arguments of ${what}`);
+    return args;
   }
 
   private spanFrom(startIndex: number): Span {
@@ -1055,10 +1084,10 @@ export class Parser {
   }
 
   private parseMultiplicative(): Expr {
-    let left = this.parseUnary();
+    let left = this.parsePostfix();
     while (this.check("punct", "*") || this.check("punct", "/")) {
       const op = this.next().text as BinaryOp;
-      const right = this.parseUnary();
+      const right = this.parsePostfix();
       left = { kind: "binary", op, left, right, span: span2(left.span, right.span) };
     }
     return left;
@@ -1068,18 +1097,52 @@ export class Parser {
     if (this.check("punct", "-")) {
       const t = this.next();
       const operand = this.parseUnary();
-      return { kind: "neg", operand, span: span2(spanTok(t), operand.span) };
+      return this.negateInside(operand, (x) => ({
+        kind: "neg",
+        operand: x,
+        span: span2(spanTok(t), operand.span),
+      }));
     }
-    return this.parsePostfix();
+    return this.parsePrimary();
   }
 
+  /**
+   * Unary minus binds tighter than postfix math, so it reaches the value
+   * underneath a chain parsed from a dotted name: `-p.r` rounds `-p`.
+   */
+  private negateInside(e: Expr, makeNeg: (x: Expr) => Expr): Expr {
+    if (e.kind === "round") return { ...e, inner: this.negateInside(e.inner, makeNeg) };
+    if (e.kind === "math.postfix") return { ...e, inner: this.negateInside(e.inner, makeNeg) };
+    return makeNeg(e);
+  }
+
+  /** Postfix binds looser than unary minus: `-15.abs` is `abs(-15)` = 15. */
   private parsePostfix(): Expr {
-    let e = this.parsePrimary();
+    let e = this.parseUnary();
     while (true) {
       if (this.check("punct", ".r")) {
         this.next();
         e = { kind: "round", inner: e, span: span2(e.span, spanTok(this.prev())) };
         continue;
+      }
+      const t = this.peek();
+      if (t.kind === "punct" && t.text.startsWith(".") && t.text !== ".r") {
+        const op = t.text.slice(1) as MathPostfixOp;
+        if (MATH_POSTFIX_OPS.has(op)) {
+          this.next();
+          let args: Expr[] = [];
+          if (op === "pow") {
+            args = this.parseParenArgs(op);
+          }
+          e = {
+            kind: "math.postfix",
+            op,
+            inner: e,
+            args,
+            span: span2(e.span, spanTok(this.prev())),
+          };
+          continue;
+        }
       }
       if (this.check("punct", "[")) {
         this.next();
@@ -1206,6 +1269,37 @@ export class Parser {
           : { kind: "list.find", list, value, span: this.spanFrom(start) };
       }
 
+      // math.pi / math.e   /   math.min(3, 5) ...
+      if (parts.length === 2 && parts[0] === "math") {
+        const name = parts[1];
+        this.next();
+        if (MATH_PROPS.has(name)) {
+          return { kind: "math.prop", name: name as "pi" | "e", span: spanTok(t) };
+        }
+        if (MATH_CALLS.has(name)) {
+          this.expectPunct("(", `to open the arguments of math.${name}`);
+          const args: Expr[] = [];
+          this.skipNewlines();
+          if (!this.check("punct", ")")) {
+            args.push(this.parseExpression());
+            while (this.check("punct", ",")) {
+              this.next();
+              this.skipNewlines();
+              args.push(this.parseExpression());
+            }
+          }
+          this.skipNewlines();
+          this.expectPunct(")", `to close the arguments of math.${name}`);
+          return { kind: "math.call", fn: name as MathCallFn, args, span: this.spanFrom(start) };
+        }
+        throw new HazmaError(
+          "H2010",
+          `unknown command "math.${name}"`,
+          spanTok(t),
+          "math helpers are math.min, math.max, math.random, math.sin, math.cos, math.tan, math.clamp, and the constants math.pi and math.e",
+        );
+      }
+
       for (const p of parts) {
         if (RESERVED_WORDS.has(p) && !(p === "is" && parts[0] === "is" && p === parts[0])) {
           throw new HazmaError(
@@ -1218,13 +1312,7 @@ export class Parser {
 
       this.next();
 
-      // trailing ".r" inside a dotted name:  price.r  ->  round(price)
-      if (parts.length >= 2 && parts[parts.length - 1] === "r") {
-        const inner: Expr = { kind: "path", parts: parts.slice(0, -1), span: spanTok(t) };
-        return { kind: "round", inner, span: spanTok(t) };
-      }
-
-      return { kind: "path", parts, span: spanTok(t) };
+      return this.dottedValue(parts, spanTok(t));
     }
 
     throw new HazmaError(
@@ -1233,6 +1321,36 @@ export class Parser {
       spanTok(t),
       "values look like: 18, \"Alex\", is.ready, price.r, (a + b)",
     );
+  }
+
+  /**
+   * Builds a value from a dotted name, turning trailing postfix operators into
+   * math nodes: `price.r` rounds, `x.abs` takes an absolute value, and
+   * `x.pow(2)` raises to a power. A trailing math name is always the operator;
+   * a property with that name is reached only when it is not the last segment.
+   */
+  private dottedValue(parts: string[], span: Span): Expr {
+    if (parts.length >= 2) {
+      const last = parts[parts.length - 1];
+      if (last === "r") {
+        return { kind: "round", inner: this.dottedValue(parts.slice(0, -1), span), span };
+      }
+      if (MATH_POSTFIX_OPS.has(last)) {
+        const op = last as MathPostfixOp;
+        let args: Expr[] = [];
+        if (op === "pow") {
+          args = this.parseParenArgs(op);
+        }
+        return {
+          kind: "math.postfix",
+          op,
+          inner: this.dottedValue(parts.slice(0, -1), span),
+          args,
+          span,
+        };
+      }
+    }
+    return { kind: "path", parts, span };
   }
 
   private parseFuncCall(): FuncCall {

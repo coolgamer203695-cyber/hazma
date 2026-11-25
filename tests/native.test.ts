@@ -286,7 +286,7 @@ describe("native backend", { skip }, () => {
       "Alex ok",
       "42",
       "3",
-      "-3",
+      "-2",
       "teen",
       "a\tb",
       "false",
@@ -443,6 +443,60 @@ describe("native backend", { skip }, () => {
     assert.equal(r.ok, true, r.stderr);
     assert.deepEqual(r.output, []);
     assert.ok(readFileSync(out).length > 0);
+  });
+
+  it("implements postfix math natively", () => {
+    const r = run(
+      [
+        'log.out { -15.abs }',
+        "save : p = 2.5",
+        'log.out { -p.r }',
+        "log.out { 2.pow(3) }",
+        "log.out { 25.sqrt }",
+        "log.out { 2.9.floor }",
+        "log.out { 2.1.ceil }",
+        "log.out { 2.5.round }",
+      ].join("\n"),
+    );
+    assert.equal(r.ok, true, r.stderr);
+    assert.deepEqual(r.output, ["15", "-2", "8", "5", "2", "3", "3"]);
+  });
+
+  it("implements math helpers natively", () => {
+    const r = run(
+      [
+        "log.out { math.min(3, 5) }",
+        "log.out { math.max(3, 5) }",
+        "log.out { math.clamp(150, 0, 100) }",
+        "log.out { math.clamp(-5, 0, 100) }",
+        "log.out { math.sin(90) }",
+        "log.out { math.cos(180) }",
+        "log.out { math.tan(0) }",
+        "log.out { math.random(1, 1) }",
+        "log.out { math.random(4, 4) }",
+      ].join("\n"),
+    );
+    assert.equal(r.ok, true, r.stderr);
+    assert.deepEqual(r.output, ["3", "5", "100", "0", "1", "-1", "0", "1", "4"]);
+  });
+
+  it("reports math type errors natively", () => {
+    const r = run(
+      [
+        'func : f {',
+        '  func.p : flag',
+        '  if : flag {',
+        '    func.r : 5',
+        '  }',
+        '  func.r : "text"',
+        '}',
+        'log.out { func.c : f { false }.abs }',
+      ].join("\n"),
+    );
+    assert.equal(r.ok, false);
+    assert.notEqual(r.exitCode, 0);
+    assert.match(r.stderr ?? "", /H4065/);
+    assert.match(r.stderr ?? "", /\.abs/);
   });
 });
 

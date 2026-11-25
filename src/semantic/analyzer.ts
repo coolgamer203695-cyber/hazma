@@ -963,6 +963,72 @@ export class Analyzer {
         this.requireTextPath(expr.path, ctx, "file.exists");
         return T_BOOLEAN;
       }
+
+      case "math.prop":
+        return T_NUMBER; // math.pi, math.e
+
+      case "math.call": {
+        const arity: Record<string, number> = {
+          min: 2,
+          max: 2,
+          random: 2,
+          clamp: 3,
+          sin: 1,
+          cos: 1,
+          tan: 1,
+        };
+        const want = arity[expr.fn];
+        const atLeast = expr.fn === "min" || expr.fn === "max";
+        if (atLeast ? expr.args.length < want : expr.args.length !== want) {
+          this.error(
+            "H3046",
+            `math.${expr.fn} takes ${atLeast ? "at least " : ""}${want} argument${want === 1 ? "" : "s"} but received ${expr.args.length}`,
+            expr.span,
+          );
+        }
+        for (const a of expr.args) {
+          const t = this.exprType(a, ctx);
+          if (t.k !== "number" && t.k !== "any") {
+            this.error(
+              "H3067",
+              `math.${expr.fn} works on numbers, but this is ${typeName(t)}`,
+              a.span,
+            );
+          }
+        }
+        return T_NUMBER;
+      }
+
+      case "math.postfix": {
+        const t = this.exprType(expr.inner, ctx);
+        if (t.k !== "number" && t.k !== "any") {
+          this.error(
+            "H3067",
+            `"${expr.op}" works on numbers, but this is ${typeName(t)}`,
+            expr.span,
+            `${expr.op} needs a number - the value before the dot must be a number`,
+          );
+        }
+        if (expr.op === "pow") {
+          if (expr.args.length !== 1) {
+            this.error(
+              "H3046",
+              `math.pow takes 1 argument but received ${expr.args.length}`,
+              expr.span,
+            );
+          } else {
+            const at = this.exprType(expr.args[0], ctx);
+            if (at.k !== "number" && at.k !== "any") {
+              this.error(
+                "H3067",
+                `math.pow works on numbers, but this is ${typeName(at)}`,
+                expr.args[0].span,
+              );
+            }
+          }
+        }
+        return T_NUMBER;
+      }
     }
   }
 
@@ -1579,6 +1645,14 @@ export class Analyzer {
         case "file.read":
         case "file.exists":
           addExpr(e.path);
+          break;
+        case "math.prop": break; // no variables
+        case "math.call":
+          for (const a of e.args) addExpr(a);
+          break;
+        case "math.postfix":
+          addExpr(e.inner);
+          for (const a of e.args) addExpr(a);
           break;
         default: break;
       }

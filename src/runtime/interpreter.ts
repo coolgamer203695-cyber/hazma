@@ -1153,7 +1153,64 @@ export class Interpreter {
           return false;
         }
       }
+
+      case "math.prop":
+        return expr.name === "pi" ? Math.PI : Math.E;
+
+      case "math.postfix": {
+        const v = this.eval(expr.inner, scope, span);
+        const n = this.mathNumber(v, expr.inner.span, `.${expr.op}`);
+        switch (expr.op) {
+          case "abs": return Math.abs(n);
+          case "sqrt": return Math.sqrt(n);
+          case "floor": return Math.floor(n);
+          case "ceil": return Math.ceil(n);
+          case "round": return Math.round(n);
+          case "pow": {
+            const rawExp = this.eval(expr.args[0], scope, span);
+            const p = this.mathNumber(rawExp, expr.args[0].span, ".pow");
+            return Math.pow(n, p);
+          }
+        }
+      }
+
+      case "math.call": {
+        if (expr.fn === "random") {
+          const a = this.mathNumber(this.eval(expr.args[0], scope, span), expr.args[0].span, "math.random");
+          const b = this.mathNumber(this.eval(expr.args[1], scope, span), expr.args[1].span, "math.random");
+          if (a > b) {
+            throw new HazmaError(
+              "H4066",
+              `math.random needs the first number to be no larger than the second, but got ${format(a)} and ${format(b)}`,
+              expr.span,
+              "math.random(1, 6) returns a whole number from 1 to 6",
+            );
+          }
+          return Math.floor(a + Math.random() * (b - a + 1));
+        }
+        const nums = expr.args.map((a) => this.mathNumber(this.eval(a, scope, span), a.span, `math.${expr.fn}`));
+        switch (expr.fn) {
+          case "min": return Math.min(...nums);
+          case "max": return Math.max(...nums);
+          case "clamp": return Math.min(Math.max(nums[0], nums[1]), nums[2]);
+          case "sin": return Math.sin((nums[0] * Math.PI) / 180);
+          case "cos": return Math.cos((nums[0] * Math.PI) / 180);
+          case "tan": return Math.tan((nums[0] * Math.PI) / 180);
+        }
+      }
     }
+  }
+
+  /** Math helpers accept only numbers; anything else is a runtime error. */
+  private mathNumber(v: RuntimeValue, span: Span | undefined, what: string): number {
+    if (typeof v !== "number") {
+      throw new HazmaError(
+        "H4065",
+        `${what} works on numbers, but this is ${fmtType(v)}`,
+        span,
+      );
+    }
+    return v;
   }
 
   private evalBinary(

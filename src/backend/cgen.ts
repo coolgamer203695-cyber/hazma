@@ -1121,6 +1121,45 @@ class Generator {
           code: `hz_file_exists(${path.code}, ${this.F}, ${this.line(e.span)})`,
         };
       }
+      case "math.prop":
+        return {
+          pre: [],
+          code: `hz_num(${e.name === "pi" ? "3.14159265358979323846" : "2.71828182845904523536"})`,
+        };
+      case "math.postfix": {
+        const inner = this.expr(e.inner, scope);
+        const pre = [...inner.pre];
+        const v = this.tmp(pre, "", inner.code);
+        const at = `${this.F}, ${this.line(e.span)}`;
+        if (e.op === "pow") {
+          const exp = this.expr(e.args[0], scope);
+          pre.push(...exp.pre);
+          const p = this.tmp(pre, "", exp.code);
+          return { pre, code: `hz_math_pow(${v}, ${p}, ${at})` };
+        }
+        return { pre, code: `hz_math_${e.op}(${v}, ${at})` };
+      }
+      case "math.call": {
+        const pre: string[] = [];
+        const args = e.args.map((a) => {
+          const r = this.expr(a, scope);
+          pre.push(...r.pre);
+          return this.tmp(pre, "", r.code);
+        });
+        const at = `${this.F}, ${this.line(e.span)}`;
+        if (e.fn === "min" || e.fn === "max") {
+          let code = args[0] ?? "hz_num(0)";
+          for (let i = 1; i < args.length; i++) code = `hz_math_${e.fn}(${code}, ${args[i]}, ${at})`;
+          return { pre, code };
+        }
+        if (e.fn === "random") {
+          return { pre, code: `hz_math_random(${args[0]}, ${args[1]}, ${at})` };
+        }
+        if (e.fn === "clamp") {
+          return { pre, code: `hz_math_clamp(${args[0]}, ${args[1]}, ${args[2]}, ${at})` };
+        }
+        return { pre, code: `hz_math_${e.fn}(${args[0]}, ${at})` };
+      }
     }
   }
 

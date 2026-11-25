@@ -104,6 +104,15 @@ HAZMA source  ->  lexer  ->  parser  ->  analyzer (typed IR)
   log.out { l.count : weapons }       // 2
   log.out { l.find.index : weapons { "Gun" } }   // 0
   ```
+
+- **Math** — postfix operators on numbers bind tighter than a leading minus,
+  so `-15.abs` is `abs(-15)` = 15: `.abs`, `.sqrt`, `.floor`, `.ceil`,
+  `.round`, `.pow(...)`. The `math.*` helpers take parenthesised arguments
+  — `math.min(3, 5)`, `math.max(...)`, `math.random(1, 6)` (whole number,
+  inclusive), `math.clamp(x, 0, 100)`, `math.sin/cos/tan` in degrees, and
+  the constants `math.pi` / `math.e`. All math takes numbers only and
+  reports precise errors (H3067 / H4065 / H4066).
+
 - **Files and folders** — `file.create`, `file.write` / `file.add` with raw
   text blocks, `file.delete`, `folder.create`, recursive `folder.delete`,
   and the `file.read` / `file.exists` values:
@@ -133,7 +142,7 @@ HAZMA source  ->  lexer  ->  parser  ->  analyzer (typed IR)
 - **Real diagnostics** — every problem has an `H` code, a precise
   span, a plain-English message and often a `help:` line
   (`error[H3012]: "age" holds a string and cannot be changed to a
-  number ... help: use t.change : age = ...`). 144 distinct codes.
+  number ... help: use t.change : age = ...`). 147 distinct codes.
 - **Real native executables** — `run`, `build`, `--emit-c`, `--keep`,
   `-o`, and `--interpret`, backed by a C runtime that implements values,
   strings, lists, structures, arithmetic, diagnostics and the named-repeat
@@ -144,8 +153,8 @@ HAZMA source  ->  lexer  ->  parser  ->  analyzer (typed IR)
 - **Examples** — `examples/01_hello.hz` through `examples/07_lists.hz`,
   each with exact-output tests (run natively and compared against the
   interpreter).
-- **Tests** — `npm test` runs the full suite (208 tests: lexer, parser,
-  semantics, runtime, lists, files/folders, `check.error`, example programs,
+- **Tests** — `npm test` runs the full suite (231 tests: lexer, parser,
+  semantics, runtime, lists, math, files/folders, `check.error`, example programs,
   and native compile/run tests that skip when no C toolchain is present).
 - **VS Code extension** — syntax highlighting, snippets, diagnostics
   reusing the real compiler, and a run button: see
@@ -241,7 +250,7 @@ hazma/
 │   │   └── runtime/hazma_rt.c   # native C runtime
 │   ├── cli.ts  index.ts  errors.ts
 ├── scripts/copy-runtime.mjs
-├── tests/                  # node:test suite (208 tests)
+├── tests/                  # node:test suite (231 tests)
 ├── examples/               # 01_hello.hz ... 07_lists.hz, benchmark.hz
 ├── docs/                   # language spec, decisions, architecture
 └── vscode-hazma/           # VS Code extension (highlighting, diagnostics, run)

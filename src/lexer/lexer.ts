@@ -11,6 +11,9 @@ const isIdentStart = (c: string) =>
   (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_";
 const isIdentChar = (c: string) => isIdentStart(c) || isDigit(c);
 
+/** Postfix math names that may follow a `.` directly after a value. */
+const MATH_POSTFIX_NAMES = new Set(["abs", "sqrt", "floor", "ceil", "round", "pow"]);
+
 /**
  * Turns the literal text between a `file.write`/`file.add` opening `{` and the
  * closing `}` line into the bytes written to disk.
@@ -171,20 +174,34 @@ export function tokenize(source: string): Token[] {
       continue;
     }
 
-    // postfix round ".r" directly after a number or a closing parenthesis:
-    //   2.2.r    (price + tax).r
+    // postfix math directly after a number, a closing parenthesis or a closing
+    // bracket:  2.2.r   (price + tax).r   2.pow(3)   25.sqrt   xs[1].abs
     const prev = tokens[tokens.length - 1];
-    if (
-      c === "." &&
-      source[i + 1] === "r" &&
-      !isIdentChar(source[i + 2] ?? "") &&
-      prev &&
-      (prev.kind === "number" || (prev.kind === "punct" && prev.text === ")"))
-    ) {
-      push("punct", ".r", sl, sc);
-      i += 2;
-      col += 2;
-      continue;
+    const afterValue =
+      prev !== undefined &&
+      (prev.kind === "number" ||
+        prev.kind === "string" ||
+        (prev.kind === "punct" &&
+          (prev.text === ")" ||
+            prev.text === "]" ||
+            prev.text === "}" ||
+            prev.text.startsWith("."))));
+    if (c === "." && afterValue && isIdentStart(source[i + 1] ?? "")) {
+      let j = i + 1;
+      while (j < source.length && isIdentChar(source[j])) j++;
+      const name = source.slice(i + 1, j);
+      if (name === "r" && !isIdentChar(source[i + 2] ?? "")) {
+        push("punct", ".r", sl, sc);
+        i += 2;
+        col += 2;
+        continue;
+      }
+      if (MATH_POSTFIX_NAMES.has(name)) {
+        push("punct", "." + name, sl, sc);
+        col += j - i;
+        i = j;
+        continue;
+      }
     }
 
     // Raw text block for file.write / file.add: `{` opens literal text that
