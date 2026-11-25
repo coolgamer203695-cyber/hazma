@@ -1,0 +1,83 @@
+// 08_math.hz - postfix math operators and math.* helpers.
+//
+// Run:  hazma run examples/08_math.hz
+// Expected output is shown in the comments.
+
+// ---------- postfix operators (bind tighter than unary minus) ----------
+
+// abs: -15.abs is abs(-15) = 15 (minus binds to the value first)
+log.out { -15.abs }                    // 15
+
+save : temp = -7
+log.out { temp.abs }                   // 7
+
+// sqrt
+log.out { 25.sqrt }                    // 5
+log.out { 0.sqrt }                     // 0
+
+// floor / ceil / round
+log.out { 2.9.floor }                  // 2
+log.out { -2.1.floor }                 // -3
+log.out { 2.1.ceil }                   // 3
+log.out { -2.1.ceil }                  // -2
+log.out { 2.5.round }                  // 3
+log.out { 2.4.round }                  // 2
+
+// pow
+log.out { 2.pow(3) }                   // 8
+log.out { 2.pow(0) }                   // 1
+save : n = 3
+log.out { n.pow(2) }                   // 9
+
+// minus binds tighter than postfix: (-2)^2 = 4, not -(2^2) = -4
+log.out { -2.pow(2) }                  // 4
+save : x = 2
+log.out { -x.pow(2) }                  // 4
+log.out { -2.pow(3) }                  // -8
+log.out { -(-15).abs }                 // 15
+
+// chained postfix: left to right
+log.out { 2.pow(3).abs }               // 8
+log.out { 25.sqrt.floor }              // 5
+
+// works on list elements and parenthesised values
+save : xs = {-3, 4}
+log.out { xs[1].abs }                  // 3
+save : a = 2.2
+save : b = 0.9
+log.out { (a + b).floor }              // 3
+
+// ---------- math.* helpers ----------
+
+log.out { math.min(3, 5) }             // 3
+log.out { math.max(3, 5) }             // 5
+log.out { math.min(4, 2, 9) }          // 2
+log.out { math.max(4, 2, 9) }          // 9
+
+log.out { math.clamp(150, 0, 100) }    // 100
+log.out { math.clamp(-5, 0, 100) }     // 0
+log.out { math.clamp(50, 0, 100) }     // 50
+
+// trig is in degrees
+log.out { math.sin(0) }                // 0
+log.out { math.sin(90) }               // 1
+log.out { math.cos(0) }                // 1
+log.out { math.cos(180) }              // -1
+log.out { math.tan(0) }                // 0
+
+// constants
+log.out { math.pi }                    // 3.141592653589793
+log.out { math.e }                     // 2.718281828459045
+
+// random: whole number in a..b inclusive
+log.out { math.random(1, 1) }          // 1
+log.out { math.random(4, 4) }          // 4
+
+// ---------- combined with check.error ----------
+
+save : temp = 20
+save : text = file.read : "settings.txt"
+check.error {
+    log.out { "settings.txt missing — using default temperature" }
+}
+log.out { temp }                   // 20
