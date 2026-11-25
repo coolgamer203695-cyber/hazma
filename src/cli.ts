@@ -81,12 +81,13 @@ export function runCli(argv: string[]): void {
     case "--help": {
       console.log(`HAZMA ${VERSION} - one language for the web
 
-  hazma run app.hz      compile and execute a program (native by default)
+  hazma app.hz              compile and execute a program (native by default)
+  hazma run app.hz          compile and execute a program (native by default)
   hazma run app.hz --interpret   use the tree-walking interpreter
   hazma run app.hz --emit-c      print the generated C instead of running
   hazma run app.hz --keep        keep the temporary C files
   hazma run app.hz -o out.exe    compile to an executable without running
-  hazma build app.hz -o app.exe  compile only, write a native executable
+  hazma build app.hz -o app.exe  compile only, write a native executable (defaults to app.exe)
   hazma interpret app.hz  run with the tree-walking interpreter
   hazma check app.hz    compile only, report problems
   hazma ast app.hz      print the parsed syntax tree
@@ -137,8 +138,10 @@ export function runCli(argv: string[]): void {
     case "build": {
       const { source, file } = readProgram(rest[0], "build");
       const outArg = rest.indexOf("-o");
-      const out = outArg >= 0 && rest[outArg + 1] ? rest[outArg + 1] : undefined;
-      if (!out) fail(`hazma build: provide an output, e.g. hazma build app.hz -o app.exe`);
+      let out = outArg >= 0 && rest[outArg + 1] ? rest[outArg + 1] : undefined;
+      if (!out) {
+        out = file.replace(/\.hz$/i, "") + ".exe";
+      }
       const build = buildNative({ file, out });
       if (build.exitCode !== 0) {
         if (build.stderr) console.error(build.stderr);
@@ -218,9 +221,19 @@ log.out {
       break;
     }
 
-    default:
+    default: {
+      // `hazma app.hz` is a shortcut for `hazma run app.hz`
+      if (cmd !== undefined && looksLikeHazmaFile(cmd)) {
+        return runCli(["run", cmd, ...rest]);
+      }
       fail(`unknown command "${cmd}" - try hazma help`);
+    }
   }
+}
+
+/** A positional argument that looks like a HAZMA source file. */
+function looksLikeHazmaFile(name: string): boolean {
+  return name.endsWith(".hz") || name.startsWith(".") || name.startsWith("/") || name.includes("\\") || name.includes("/");
 }
 
 // ---------------------------------------------------------------------------
